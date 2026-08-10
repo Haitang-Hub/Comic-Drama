@@ -1,0 +1,20 @@
+/* 柔光色系：橙黄 / 米奶白 / 薄荷绿（Macaron，纯色无渐变） */
+[data-theme='soft'] {
+  --cd-primary: #ff9f1c;
+  --cd-primary-hover: #e88a00;
+  --cd-accent: #c5dedd;
+
+  --cd-bg: #faf5eb;
+  --cd-bg-card: #fffdf7;
+  --cd-bg-soft: #f8ebd9;
+
+  --cd-text: #5a4a42;
+  --cd-text-secondary: #8a7a70;
+
+  --cd-border: #e0bfa0;
+  --cd-shadow: #d9b89a;
+
+  --cd-success: #8fc9a8;
+  --cd-warning: #f2c879;
+  --cd-danger: #e89b8b;
+}

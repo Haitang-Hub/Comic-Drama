@@ -1,0 +1,12 @@
+target/
+*.class
+*.log
+.git/
+.gitignore
+.idea/
+.vscode/
+*.iml
+node_modules/
+dist/
+.env
+docker/

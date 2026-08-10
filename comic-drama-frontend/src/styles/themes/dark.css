@@ -1,0 +1,20 @@
+/* 暗光色系：灰蓝 / 深紫 / 夜蓝（Macaron，纯色无渐变） */
+[data-theme='dark'] {
+  --cd-primary: #567a9e;
+  --cd-primary-hover: #6e8fae;
+  --cd-accent: #6fb1fc;
+
+  --cd-bg: #1f1f2c;
+  --cd-bg-card: #2a2a3c;
+  --cd-bg-soft: #222234;
+
+  --cd-text: #ece6d5;
+  --cd-text-secondary: #a89fb5;
+
+  --cd-border: #4a4a5c;
+  --cd-shadow: #263c51;
+
+  --cd-success: #7fd1a3;
+  --cd-warning: #f5c26b;
+  --cd-danger: #ef6b6b;
+}

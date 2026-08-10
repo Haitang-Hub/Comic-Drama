@@ -1,0 +1,56 @@
+# ===== Java / Maven =====
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+hs_err_pid*
+.mvn/wrapper/maven-wrapper.jar
+
+# ===== Node / 前端 =====
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== IDE =====
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 日志与运行时数据 =====
+logs/
+*.log
+data/
+*.pid
+
+# ===== 环境与密钥（禁止提交真实密钥）=====
+.env
+.env.*
+*.pem
+*.key
+
+# ===== 数据库快照 / 临时文件 =====
+*.db
+*.sqlite
+dump.rdb

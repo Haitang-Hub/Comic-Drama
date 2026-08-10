@@ -1,0 +1,6 @@
+export { default as SpiralNotebook } from './SpiralNotebook.vue'
+export { default as Pencil } from './Pencil.vue'
+export { default as StickyNote } from './StickyNote.vue'
+export { default as Marker } from './Marker.vue'
+export { default as Doodles } from './Doodles.vue'
+export { default as NotebookDesk } from './NotebookDesk.vue'

@@ -1,0 +1,27 @@
+# 自定义 HTTP 模板示例：接入任意 OpenAI 兼容文本 API
+# protocol 值为 custom-http-openai-compat，在 ai_model_config 表中配置此值即可路由到本模板
+name: openai-compat
+description: 接入任意 OpenAI /chat/completions 兼容文本 API（如通义千问、Moonshot、零一万物等）
+modelTypes: [1]
+capabilities: [STREAMING, FUNCTION_CALLING, LONG_CONTEXT]
+
+request:
+  path: /chat/completions
+  method: POST
+  headers:
+    Content-Type: application/json
+    Authorization: "Bearer {{apiKey}}"
+  body: |
+    {
+      "model": "{{modelName}}",
+      "messages": [
+        {"role": "system", "content": "{{systemPrompt}}"},
+        {"role": "user", "content": "{{prompt}}"}
+      ],
+      "temperature": 0.7,
+      "max_tokens": 8192
+    }
+
+response:
+  textJsonPath: choices[0].message.content
+  errorJsonPath: error.message

@@ -1,0 +1,20 @@
+/* 亮光色系：杏粉 / 纯白 / 青绿（Macaron，纯色无渐变） */
+[data-theme='bright'] {
+  --cd-primary: #f5a788;
+  --cd-primary-hover: #e8956e;
+  --cd-accent: #2ec4b6;
+
+  --cd-bg: #ffffff;
+  --cd-bg-card: #ffffff;
+  --cd-bg-soft: #fff7f7;
+
+  --cd-text: #2d2a26;
+  --cd-text-secondary: #6b6660;
+
+  --cd-border: #2d2a26;
+  --cd-shadow: #2d2a26;
+
+  --cd-success: #2ec4b6;
+  --cd-warning: #ff9f1c;
+  --cd-danger: #e63946;
+}

@@ -1,0 +1,65 @@
+server:
+  port: 8105
+
+spring:
+  application:
+    name: comic-resource-service
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/comic_drama?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 200MB
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: ASSIGN_ID
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://127.0.0.1:8761/eureka/
+  instance:
+    prefer-ip-address: true
+
+sa-token:
+  token-name: Authorization
+  token-prefix: Bearer
+  jwt-secret-key: comic-drama-jwt-secret-2026-phase1-change-in-prod
+  is-log: false
+
+# 存储配置（Phase-1 本地磁盘；Phase-2 storage.type=minio）
+storage:
+  type: local
+  local-base-path: f:/Code_Project/AIGC Files/Comic drama/data/storage
+  local-base-url: http://127.0.0.1:8105/static
+
+logging:
+  level:
+    com.comicdrama: info
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha

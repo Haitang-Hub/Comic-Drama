@@ -1,0 +1,53 @@
+server:
+  port: 8070
+
+spring:
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/comic_drama?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_URL:127.0.0.1}
+      port: 6379
+      password: ${REDIS_PASSWORD:}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: ASSIGN_ID
+
+sa-token:
+  token-name: Authorization
+  token-prefix: Bearer
+  jwt-secret-key: comic-drama-jwt-secret-2026-phase1-change-in-prod
+
+task:
+  queue:
+    type: ${TASK_QUEUE_TYPE:memory}
+    poll-interval-ms: 1000
+
+rocketmq:
+  namesrv-addr: ${ROCKETMQ_NAMESRV_ADDR:127.0.0.1:9876}
+
+sentinel:
+  flow:
+    default-qps: 200
+    task-submit-qps: 10
+    ai-call-qps: 5
+  degrade:
+    ai-call-rt-ms: 30000
+    ai-call-error-ratio: 0.5
+
+logging:
+  level:
+    com.comicdrama: info
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway

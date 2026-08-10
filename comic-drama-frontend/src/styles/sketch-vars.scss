@@ -1,0 +1,22 @@
+// 绘画本速写风格共享变量与 mixin（由 vite additionalData 全局注入到每个 scss）
+// 颜色统一引用 CSS 变量，确保三主题切换生效。
+
+@mixin sketch-card {
+  background-color: var(--cd-bg-card);
+  border: 1.5px solid var(--cd-border);
+  border-radius: 6px;
+  box-shadow: 3px 3px 0 0 var(--cd-shadow);
+}
+
+@mixin sketch-border {
+  border: 1.5px solid var(--cd-border);
+  border-radius: 6px;
+}
+
+@mixin sketch-shadow($size: 3px) {
+  box-shadow: #{$size} #{$size} 0 0 var(--cd-shadow);
+}
+
+@mixin no-gradient {
+  background-image: none;
+}

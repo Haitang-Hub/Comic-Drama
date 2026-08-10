@@ -1,0 +1,320 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: comic-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:123456}
+      MYSQL_DATABASE: comic_drama
+      MYSQL_USER: comic
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:comic_drama_2026}
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - comic-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: comic-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:comic_redis_2026} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - comic-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: comic-nacos
+    environment:
+      MODE: standalone
+      SPRING_DATASOURCE_PLATFORM: mysql
+      MYSQL_SERVICE_HOST: mysql
+      MYSQL_SERVICE_PORT: 3306
+      MYSQL_SERVICE_DB_NAME: nacos_config
+      MYSQL_SERVICE_USER: ${NACOS_DB_USER:nacos}
+      MYSQL_SERVICE_PASSWORD: ${NACOS_DB_PASSWORD:nacos_2026}
+      NACOS_AUTH_ENABLE: "false"
+      TZ: Asia/Shanghai
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    volumes:
+      - nacos-data:/home/nacos/data
+      - nacos-logs:/home/nacos/logs
+    networks:
+      - comic-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  sentinel:
+    image: bladex/sentinel-dashboard:1.8.8
+    container_name: comic-sentinel
+    environment:
+      JAVA_OPTS: "-Dserver.port=8080 -Dcsp.sentinel.dashboard.server=localhost:8080"
+    ports:
+      - "8090:8080"
+    networks:
+      - comic-net
+    profiles:
+      - monitoring
+
+  rocketmq:
+    image: apache/rocketmq:5.1.4
+    container_name: comic-rocketmq
+    environment:
+      JAVA_OPT_EXT: "-server -Xms512m -Xmx512m -Xmn256m"
+    ports:
+      - "9876:9876"
+      - "10911:10911"
+      - "10909:10909"
+    command: sh mqbroker -n 0.0.0.0:9876 -c /home/rocketmq/rocketmq-5.1.4/conf/broker.conf
+    volumes:
+      - rocketmq-data:/home/rocketmq/store
+      - ./rocketmq/broker.conf:/home/rocketmq/rocketmq-5.1.4/conf/broker.conf
+    networks:
+      - comic-net
+    profiles:
+      - mq
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.1.4
+    container_name: comic-rocketmq-namesrv
+    ports:
+      - "9877:9876"
+    command: sh mqnamesrv
+    networks:
+      - comic-net
+    profiles:
+      - mq
+
+  minio:
+    image: minio/minio:latest
+    container_name: comic-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:minioadmin_2026}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - comic-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  comic-gateway:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: comic-gateway
+    container_name: comic-gateway
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      NACOS_SERVER_ADDR: nacos:8848
+      SENTINEL_DASHBOARD_ADDR: sentinel:8080
+    ports:
+      - "8070:8070"
+    networks:
+      - comic-net
+    depends_on:
+      nacos:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  comic-auth-service:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: comic-auth-service
+    container_name: comic-auth-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      NACOS_SERVER_ADDR: nacos:8848
+      MYSQL_URL: jdbc:mysql://mysql:3306/comic_drama?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      MYSQL_USERNAME: ${MYSQL_USER:comic}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:comic_drama_2026}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:comic_redis_2026}
+    networks:
+      - comic-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  comic-system-service:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: comic-system-service
+    container_name: comic-system-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      NACOS_SERVER_ADDR: nacos:8848
+      MYSQL_URL: jdbc:mysql://mysql:3306/comic_drama?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      MYSQL_USERNAME: ${MYSQL_USER:comic}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:comic_drama_2026}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:comic_redis_2026}
+    networks:
+      - comic-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  comic-task-service:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: comic-task-service
+    container_name: comic-task-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      NACOS_SERVER_ADDR: nacos:8848
+      MYSQL_URL: jdbc:mysql://mysql:3306/comic_drama?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      MYSQL_USERNAME: ${MYSQL_USER:comic}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:comic_drama_2026}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:comic_redis_2026}
+      TASK_QUEUE_TYPE: ${TASK_QUEUE_TYPE:memory}
+      ROCKETMQ_NAMESRV_ADDR: rocketmq:9876
+    networks:
+      - comic-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1024m
+
+  comic-workflow-service:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: comic-workflow-service
+    container_name: comic-workflow-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      NACOS_SERVER_ADDR: nacos:8848
+      MYSQL_URL: jdbc:mysql://mysql:3306/comic_drama?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      MYSQL_USERNAME: ${MYSQL_USER:comic}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:comic_drama_2026}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:comic_redis_2026}
+    networks:
+      - comic-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1024m
+
+  comic-resource-service:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+      args:
+        SERVICE: comic-resource-service
+    container_name: comic-resource-service
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      NACOS_SERVER_ADDR: nacos:8848
+      MYSQL_URL: jdbc:mysql://mysql:3306/comic_drama?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      MYSQL_USERNAME: ${MYSQL_USER:comic}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:comic_drama_2026}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:minioadmin_2026}
+    networks:
+      - comic-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  comic-frontend:
+    build:
+      context: ../comic-drama-frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: comic-frontend
+    ports:
+      - "5173:80"
+    networks:
+      - comic-net
+    depends_on:
+      - comic-gateway
+
+volumes:
+  mysql-data:
+  redis-data:
+  nacos-data:
+  nacos-logs:
+  rocketmq-data:
+  minio-data:
+
+networks:
+  comic-net:
+    driver: bridge

@@ -1,0 +1,68 @@
+server:
+  port: 8070
+
+spring:
+  application:
+    name: comic-gateway
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: false
+      routes:
+        - id: auth-service
+          uri: http://127.0.0.1:8101
+          predicates:
+            - Path=/auth/**,/api/sys/**
+        - id: system-service
+          uri: http://127.0.0.1:8102
+          predicates:
+            - Path=/api/system/**,/api/template/**,/api/operation-log/**,/api/statistics/**
+        - id: task-service
+          uri: http://127.0.0.1:8103
+          predicates:
+            - Path=/api/task/**,/api/queue/**,/api/progress/**,/api/failure/**,/api/node-state/**
+        - id: workflow-service
+          uri: http://127.0.0.1:8104
+          predicates:
+            - Path=/api/workflow/**,/api/admin/**
+        - id: resource-service
+          uri: http://127.0.0.1:8105
+          predicates:
+            - Path=/api/resource/**,/api/work/**,/static/**
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://127.0.0.1:8761/eureka/
+  instance:
+    prefer-ip-address: true
+
+sa-token:
+  token-name: Authorization
+  token-prefix: Bearer
+  timeout: 2592000
+  is-concurrent: true
+  is-share: false
+  jwt-secret-key: comic-drama-jwt-secret-2026-phase1-change-in-prod
+  is-log: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+
+sentinel:
+  flow:
+    default-qps: 200
+    task-submit-qps: 10
+    ai-call-qps: 5
+  degrade:
+    ai-call-rt-ms: 30000
+    ai-call-error-ratio: 0.5
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.comicdrama: DEBUG
