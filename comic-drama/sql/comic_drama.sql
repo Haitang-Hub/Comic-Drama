@@ -253,6 +253,7 @@ CREATE TABLE `comic_task` (
   `total_consume_time`          INT                   DEFAULT 0      COMMENT '总耗时（秒）',
   `cover_url`                   VARCHAR(512)          DEFAULT NULL   COMMENT '任务封面图URL',
   `final_video_url`             VARCHAR(512)          DEFAULT NULL   COMMENT '最终成片视频URL',
+  `final_work_manifest`         MEDIUMTEXT            DEFAULT NULL   COMMENT '成片manifest.json(包含视频列表)',
   `remark`                      VARCHAR(255)          DEFAULT NULL   COMMENT '备注',
   `create_time`                 DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time`                 DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

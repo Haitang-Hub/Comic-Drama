@@ -42,6 +42,9 @@ public class TaskDetailVO implements Serializable {
     private String finalVideoUrl;
     private String coverUrl;
 
+    /** 成片 manifest.json 内容（包含视频片段列表，用于在线播放） */
+    private String finalWorkManifest;
+
     // ========== 步骤1: 故事摘要 ==========
     private StoryOutlineVO outline;
 

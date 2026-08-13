@@ -173,6 +173,7 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         vo.setTotalConsumeTime(task.getTotalConsumeTime());
         vo.setFinalVideoUrl(task.getFinalVideoUrl());
         vo.setCoverUrl(task.getCoverUrl());
+        vo.setFinalWorkManifest(task.getFinalWorkManifest());
         vo.setOutline(queryStorySummary(id));
         vo.setStoryboards(queryStoryboards(id));
         vo.setAssetDesigns(queryAssetDesigns(id));

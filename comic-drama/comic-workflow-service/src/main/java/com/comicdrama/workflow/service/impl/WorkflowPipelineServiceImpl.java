@@ -250,9 +250,10 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
                 com.comicdrama.workflow.dto.FinalWorkInfo finalInfo = context.getArtifact(StepEnum.VIDEO_MERGE);
                 String coverUrl = finalInfo != null ? finalInfo.getCoverUrl() : null;
                 String finalVideoUrl = finalInfo != null ? finalInfo.getFinalVideoUrl() : null;
+                String manifestJson = finalInfo != null ? finalInfo.getManifestJson() : null;
 
                 taskStateManager.markAsDone(taskId, 100, totalConsumeTime,
-                        coverUrl, finalVideoUrl, LocalDateTime.now(), maxStep);
+                        coverUrl, finalVideoUrl, LocalDateTime.now(), maxStep, manifestJson);
 
                 // ComicWork 已由 VideoMergeStepHandler 通过 RestTemplate 调用 resource-service 创建
                 if (finalInfo != null && finalInfo.getWorkId() != null) {

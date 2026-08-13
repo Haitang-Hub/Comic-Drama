@@ -79,13 +79,19 @@ public class DefaultTaskStateManager implements TaskStateManager {
     public void markAsDone(Long taskId, int progress, int totalConsumeTime,
                            String coverUrl, String finalVideoUrl, LocalDateTime endTime,
                            int completedStep) {
-        log.info("markAsDone taskId={}, progress={}, consume={}ms, step={}", taskId, progress, totalConsumeTime, completedStep);
+        markAsDone(taskId, progress, totalConsumeTime, coverUrl, finalVideoUrl, endTime, completedStep, null);
+    }
+
+    @Override
+    public void markAsDone(Long taskId, int progress, int totalConsumeTime,
+                           String coverUrl, String finalVideoUrl, LocalDateTime endTime,
+                           int completedStep, String manifestJson) {
+        log.info("markAsDone taskId={}, progress={}, consume={}ms, step={}, manifestLen={}", taskId, progress, totalConsumeTime, completedStep, manifestJson != null ? manifestJson.length() : 0);
         stateCache.put(taskId, new TaskState(2, completedStep, 100, coverUrl, finalVideoUrl, null, null));
         try {
-            jdbcTemplate.update(
-                    "UPDATE comic_task SET status=2, progress=100, current_step=?, " +
-                            "end_time=?, total_consume_time=?, cover_url=?, final_video_url=? WHERE id=?",
-                    completedStep, endTime, totalConsumeTime, coverUrl, finalVideoUrl, taskId);
+            String sql = "UPDATE comic_task SET status=2, progress=100, current_step=?, " +
+                    "end_time=?, total_consume_time=?, cover_url=?, final_video_url=?, final_work_manifest=? WHERE id=?";
+            jdbcTemplate.update(sql, completedStep, endTime, totalConsumeTime, coverUrl, finalVideoUrl, manifestJson, taskId);
             jdbcTemplate.update(
                     "UPDATE task_queue SET queue_status=2, finished_time=? WHERE task_id=?",
                     endTime, taskId);

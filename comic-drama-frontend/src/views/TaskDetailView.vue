@@ -523,7 +523,7 @@
               <div class="final-meta">
                 <div class="final-title">{{ detail.title || '未命名作品' }}</div>
                 <div class="final-stats">
-                  <span>共 {{ detail.videos?.length || 0 }} 段视频</span>
+                  <span>共 {{ playList.length }} 段视频</span>
                   <span v-if="detail.duration">总时长 {{ detail.duration }}s</span>
                   <span v-if="detail.resolution">{{ detail.resolution }}</span>
                 </div>
@@ -532,12 +532,62 @@
                 </div>
               </div>
             </div>
-            <a :href="detail.finalVideoUrl" download class="final-download-btn">
-              <el-icon><Download /></el-icon>
-              下载成片包（ZIP）
-            </a>
+            <div class="final-actions">
+              <el-button type="primary" @click="startPlay" :disabled="!detail.finalWorkManifest">
+                <el-icon><VideoPlay /></el-icon>
+                播放成片
+              </el-button>
+              <a :href="detail.finalVideoUrl" download class="final-download-btn">
+                <el-icon><Download /></el-icon>
+                下载成片包（ZIP）
+              </a>
+            </div>
           </div>
         </div>
+
+        <!-- 在线播放器模态框 -->
+        <el-dialog v-model="showPlayer" title="成片播放列表" width="80%" :close-on-click-modal="false">
+          <div class="player-container" style="display: flex; gap: 20px; min-height: 400px;">
+            <!-- 左侧视频播放区 -->
+            <div class="player-main" style="flex: 1;">
+              <video
+                ref="videoElementRef"
+                :src="currentPlayingUrl"
+                controls
+                autoplay
+                style="width: 100%; max-height: 500px; background-color: black; border-radius: 8px;"
+                @ended="onVideoEnded"
+                @error="onVideoError"
+              ></video>
+              <div class="player-progress" style="margin-top: 12px; font-size: 14px; color: #666;">
+                正在播放：第 {{ currentPlayIndex + 1 }} / {{ playList.length }} 段
+                <span v-if="playList[currentPlayIndex]" style="margin-left: 10px;">
+                  ({{ playList[currentPlayIndex].duration }}s)
+                </span>
+              </div>
+            </div>
+            <!-- 右侧播放列表 -->
+            <div class="player-sidebar" style="width: 250px; border-left: 1px solid #eee; padding-left: 12px; overflow-y: auto; max-height: 500px;">
+              <h4 style="margin-top: 0;">播放列表</h4>
+              <div
+                v-for="(item, index) in playList"
+                :key="index"
+                class="playlist-item"
+                :class="{ active: index === currentPlayIndex }"
+                @click="currentPlayIndex = index; nextTick(() => videoElementRef?.play())"
+                style="padding: 8px; cursor: pointer; border-radius: 4px; margin-bottom: 4px; background: #f5f7fa;"
+                :style="{ backgroundColor: index === currentPlayIndex ? '#ecf5ff' : '#f5f7fa' }"
+              >
+                <span style="font-weight: bold; margin-right: 8px;">{{ index + 1 }}.</span>
+                {{ item.storyboardSeqRange || '片段' }}
+                <span style="float: right; color: #909399;">{{ item.duration }}s</span>
+              </div>
+            </div>
+          </div>
+          <template #footer>
+            <el-button @click="showPlayer = false">关闭</el-button>
+          </template>
+        </el-dialog>
 
         <el-empty
           v-if="!hasAnyProduct"
@@ -732,7 +782,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowDown, Warning, InfoFilled, Download } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowDown, Warning, InfoFilled, Download, VideoPlay } from '@element-plus/icons-vue'
 import {
   getTaskDetail,
   getTaskFailureLogs,
@@ -774,6 +824,64 @@ const outlineExpanded = ref(false)
 const storyboardExpanded = ref(false)
 const assetExpanded = ref(false)
 const showFailDetail = ref(false)
+
+// ======== 在线播放器状态 ========
+const showPlayer = ref(false)
+const currentPlayIndex = ref(0)
+const videoElementRef = ref<HTMLVideoElement | null>(null)
+
+// 解析 manifest.json 得到视频列表
+const playList = computed(() => {
+  if (!detail.value.finalWorkManifest) return []
+  try {
+    const manifest = JSON.parse(detail.value.finalWorkManifest)
+    return manifest.videos || []
+  } catch (e) {
+    console.error('Failed to parse manifest:', e)
+    return []
+  }
+})
+
+const currentPlayingUrl = computed(() => {
+  if (playList.value.length === 0) return ''
+  const idx = Math.min(currentPlayIndex.value, playList.value.length - 1)
+  return playList.value[idx]?.originalUrl || ''
+})
+
+const playNextVideo = () => {
+  if (currentPlayIndex.value < playList.value.length - 1) {
+    currentPlayIndex.value++
+    nextTick(() => {
+      videoElementRef.value?.play()
+    })
+  } else {
+    // 播放列表结束
+    showPlayer.value = false
+  }
+}
+
+const startPlay = () => {
+  if (playList.value.length === 0) {
+    ElMessage.warning('暂无可播放的视频')
+    return
+  }
+  currentPlayIndex.value = 0
+  showPlayer.value = true
+  nextTick(() => {
+    videoElementRef.value?.play()
+  })
+}
+
+const onVideoEnded = () => {
+  playNextVideo()
+}
+
+const onVideoError = () => {
+  ElMessage.error('视频加载失败，将尝试播放下一段')
+  setTimeout(() => {
+    playNextVideo()
+  }, 1000)
+}
 
 // ======== 人工审核：JSON 编辑模态框 ========
 const editorDialog = reactive({

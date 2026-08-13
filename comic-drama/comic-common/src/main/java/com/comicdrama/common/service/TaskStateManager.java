@@ -34,6 +34,15 @@ public interface TaskStateManager {
     }
 
     /**
+     * 标记任务为「已完成」（支持保存 manifestJson 供前端在线播放）。
+     */
+    default void markAsDone(Long taskId, int progress, int totalConsumeTime,
+                            String coverUrl, String finalVideoUrl, LocalDateTime endTime,
+                            int completedStep, String manifestJson) {
+        markAsDone(taskId, progress, totalConsumeTime, coverUrl, finalVideoUrl, endTime, completedStep);
+    }
+
+    /**
      * 标记任务为「失败」。
      */
     void markAsFailed(Long taskId, int failureStep, String failureReason,

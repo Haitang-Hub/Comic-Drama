@@ -76,5 +76,8 @@ public class ComicTask extends BaseEntity {
 
     private String finalVideoUrl;
 
+    /** 成片 manifest.json 内容（包含视频片段列表，用于在线播放） */
+    private String finalWorkManifest;
+
     private String remark;
 }

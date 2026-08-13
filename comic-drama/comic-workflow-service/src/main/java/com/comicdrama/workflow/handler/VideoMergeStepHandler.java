@@ -127,10 +127,9 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
             // 4. 生成 manifest.json
             reportProgress(context, 60, "正在生成播放清单...");
             VideoManifestDTO manifest = buildManifest(context, sortedVideos, downloaded);
+            String manifestJson = objectMapper.writeValueAsString(manifest);
             Path manifestPath = tempDir.resolve("manifest.json");
-            Files.writeString(manifestPath,
-                    objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(manifest),
-                    StandardCharsets.UTF_8);
+            Files.writeString(manifestPath, manifestJson, StandardCharsets.UTF_8);
 
             // 5. 打包 ZIP
             reportProgress(context, 70, "正在打包ZIP文件...");
@@ -165,6 +164,8 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
                     .segmentCount(manifest.getSegmentCount())
                     .totalDuration(manifest.getTotalDuration())
                     .workId(workId)
+                    .videos(manifest.getVideos())
+                    .manifestJson(manifestJson)
                     .build();
             context.putArtifact(StepEnum.VIDEO_MERGE, finalInfo);
 

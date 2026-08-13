@@ -283,6 +283,8 @@ export interface TaskDetailVO {
   totalConsumeTime?: number
   finalVideoUrl?: string
   coverUrl?: string
+  /** 成片 manifest.json 内容（包含视频片段列表，用于在线播放） */
+  finalWorkManifest?: string
   outline?: StoryOutlineVO
   sceneGroups?: SceneGroupVO[]
   storyboards?: StoryboardVO[]
