@@ -161,6 +161,9 @@ if (-not (Test-Path (Join-Path $FrontendRoot 'node_modules'))) {
   & npm install --no-audit --no-fund
   Pop-Location
 }
+# 启动前端前确保网关(8070)已就绪，避免页面打开时过早请求报 ECONNREFUSED/服务器错误
+Write-Step 'Wait for Gateway ready (before start frontend)'
+Wait-Port 8070 'Gateway' 90 | Out-Null
 Start-CmdWindow -Title 'Frontend' -WorkDir $FrontendRoot -Cmd 'npm run dev'
 Write-OK "Frontend started (port $frontendPort)"
 

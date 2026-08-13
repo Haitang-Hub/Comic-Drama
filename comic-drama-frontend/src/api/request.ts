@@ -47,7 +47,14 @@ service.interceptors.response.use(
   (error) => {
     const status = error?.response?.status
     const errMsg = error?.message || '网络请求失败'
-    if (status === 401) {
+    const code = error?.code
+    // Vite dev proxy 无法连接后端时，返回一个 500/502 响应且消息里常带 ECONNREFUSED
+    const proxyRefused = status >= 500 &&
+      (String(errMsg).includes('ECONNREFUSED') ||
+        (typeof error?.response?.data === 'string' && error.response.data.includes('ECONNREFUSED')))
+    if (code === 'ECONNREFUSED' || proxyRefused) {
+      ElMessage.error('后端服务尚未就绪，请稍等几秒或确认网关/微服务是否启动')
+    } else if (status === 401) {
       handleUnauthorized()
       ElMessage.error('登录已过期，请重新登录')
     } else if (status === 403) {
