@@ -480,7 +480,7 @@
             </div>
           </div>
           <div class="video-grid">
-            <div v-for="v in detail.videos" :key="v.id ?? v.sceneIndex" class="video-item">
+            <div v-for="(v, vidx) in detail.videos" :key="v.id ?? vidx" class="video-item">
               <div v-if="v.id && showStepControls" class="vid-actions">
                 <el-button
                   size="small"
@@ -499,7 +499,7 @@
                 class="video-player"
               />
               <div class="video-caption">
-                <span>#{{ v.sceneIndex }}</span>
+                <span>#{{ vidx + 1 }}</span>
                 <span v-if="v.duration" class="cap-sub">{{ v.duration }}s</span>
                 <span v-if="v.resolution" class="cap-sub">{{ v.resolution }}</span>
               </div>
@@ -507,12 +507,11 @@
           </div>
         </div>
 
-        <!-- ⑨ 成片下载（步骤9产物：ZIP播放清单包） -->
-        <div v-if="detail.finalVideoUrl" class="sketch-card prod-card final-card">
+        <!-- ⑨ 成片下载（步骤9产物：ZIP播放清单包）+ 在线播放（步骤8完成后也可用） -->
+        <div v-if="detail.finalVideoUrl || detail.videos?.length" class="sketch-card prod-card final-card">
           <div class="card-head">
             <div class="card-head-left">
-              <h3>⑨ 成片下载</h3>
-              <el-tag size="small" type="success" effect="plain">播放清单方案</el-tag>
+              <h3>⑨ 成片播放与下载</h3>
             </div>
           </div>
           <div class="final-content">
@@ -520,72 +519,135 @@
               <div class="final-cover" v-if="detail.coverUrl">
                 <img :src="detail.coverUrl" alt="封面" />
               </div>
+              <div class="final-cover" v-else-if="detail.videos?.length && detail.videos[0].coverUrl">
+                <img :src="detail.videos[0].coverUrl" alt="封面" />
+              </div>
               <div class="final-meta">
                 <div class="final-title">{{ detail.title || '未命名作品' }}</div>
                 <div class="final-stats">
-                  <span>共 {{ playList.length }} 段视频</span>
+                  <span>共 {{ (detail.videos?.length || 0) }} 段视频</span>
                   <span v-if="detail.duration">总时长 {{ detail.duration }}s</span>
                   <span v-if="detail.resolution">{{ detail.resolution }}</span>
                 </div>
                 <div class="final-desc">
-                  ZIP 包含：编号视频文件（001_xxx.mp4, 002_xxx.mp4...）+ manifest.json 播放清单
+                  <span v-if="detail.finalVideoUrl">ZIP 包含：编号视频文件（001_xxx.mp4, 002_xxx.mp4...）+ manifest.json 播放清单</span>
+                  <span v-else>已有场景视频可直接播放；完成步骤9后可下载打包成片</span>
                 </div>
               </div>
             </div>
             <div class="final-actions">
-              <el-button type="primary" @click="startPlay" :disabled="!detail.finalWorkManifest">
+              <el-button
+                v-if="detail.videos?.length"
+                @click="openPlayer"
+                class="final-play-btn"
+              >
                 <el-icon><VideoPlay /></el-icon>
-                播放成片
+                <span>播放成片</span>
               </el-button>
-              <a :href="detail.finalVideoUrl" download class="final-download-btn">
+              <a
+                v-if="detail.finalVideoUrl"
+                :href="detail.finalVideoUrl"
+                download
+                class="final-download-btn"
+              >
                 <el-icon><Download /></el-icon>
-                下载成片包（ZIP）
+                <span>下载成片包（ZIP）</span>
               </a>
+              <el-button
+                v-else
+                disabled
+                class="final-download-btn"
+                title="完成步骤9（视频合并）后可下载打包成片"
+              >
+                <el-icon><Download /></el-icon>
+                <span>步骤9未完成</span>
+              </el-button>
             </div>
           </div>
         </div>
 
-        <!-- 在线播放器模态框 -->
-        <el-dialog v-model="showPlayer" title="成片播放列表" width="80%" :close-on-click-modal="false">
-          <div class="player-container" style="display: flex; gap: 20px; min-height: 400px;">
-            <!-- 左侧视频播放区 -->
-            <div class="player-main" style="flex: 1;">
+        <!-- 视频播放器模态框 -->
+        <el-dialog v-model="showPlayer" title="成片播放器" width="85%" :close-on-click-modal="false" class="player-dialog">
+          <div class="player-container">
+            <div class="player-main">
               <video
-                ref="videoElementRef"
+                ref="videoElRef"
                 :src="currentPlayingUrl"
+                :loop="isSingleLoop"
+                :playback-rate="playbackRate"
                 controls
-                autoplay
-                style="width: 100%; max-height: 500px; background-color: black; border-radius: 8px;"
+                preload="auto"
+                class="player-video"
                 @ended="onVideoEnded"
                 @error="onVideoError"
+                @loadeddata="onVideoLoaded"
+                @play="isPlaying = true"
+                @pause="isPlaying = false"
               ></video>
-              <div class="player-progress" style="margin-top: 12px; font-size: 14px; color: #666;">
-                正在播放：第 {{ currentPlayIndex + 1 }} / {{ playList.length }} 段
-                <span v-if="playList[currentPlayIndex]" style="margin-left: 10px;">
-                  ({{ playList[currentPlayIndex].duration }}s)
-                </span>
+              <div class="player-controls">
+                <div class="ctrl-left">
+                  <el-button size="small" text @click="playPrev" :disabled="currentPlayIndex <= 0">上一段</el-button>
+                  <el-button size="small" type="primary" @click="togglePlay">
+                    {{ isPlaying ? '暂停' : '播放' }}
+                  </el-button>
+                  <el-button size="small" text @click="playNext" :disabled="currentPlayIndex >= playList.length - 1">下一段</el-button>
+                </div>
+                <div class="ctrl-center">
+                  <span class="player-now-playing">
+                    正在播放：第 {{ currentPlayIndex + 1 }} / {{ playList.length }} 段
+                    <span v-if="playList[currentPlayIndex]" class="player-dur">
+                      ({{ playList[currentPlayIndex].duration }}s)
+                    </span>
+                  </span>
+                </div>
+                <div class="ctrl-right">
+                  <el-button
+                    size="small"
+                    text
+                    :type="playMode !== 'sequential' ? 'primary' : ''"
+                    @click="togglePlayMode"
+                    :title="'播放模式：' + playModeLabel[playMode]"
+                  >
+                    {{ playModeLabel[playMode] }}
+                  </el-button>
+                  <el-dropdown size="small" @command="setPlaybackRate">
+                    <el-button size="small" text>
+                      {{ playbackRate }}x
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item
+                          v-for="r in [0.5, 0.75, 1, 1.25, 1.5, 2]"
+                          :key="r"
+                          :command="r"
+                          :class="{ 'is-active': playbackRate === r }"
+                        >{{ r }}x</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
               </div>
             </div>
-            <!-- 右侧播放列表 -->
-            <div class="player-sidebar" style="width: 250px; border-left: 1px solid #eee; padding-left: 12px; overflow-y: auto; max-height: 500px;">
-              <h4 style="margin-top: 0;">播放列表</h4>
-              <div
-                v-for="(item, index) in playList"
-                :key="index"
-                class="playlist-item"
-                :class="{ active: index === currentPlayIndex }"
-                @click="currentPlayIndex = index; nextTick(() => videoElementRef?.play())"
-                style="padding: 8px; cursor: pointer; border-radius: 4px; margin-bottom: 4px; background: #f5f7fa;"
-                :style="{ backgroundColor: index === currentPlayIndex ? '#ecf5ff' : '#f5f7fa' }"
-              >
-                <span style="font-weight: bold; margin-right: 8px;">{{ index + 1 }}.</span>
-                {{ item.storyboardSeqRange || '片段' }}
-                <span style="float: right; color: #909399;">{{ item.duration }}s</span>
-              </div>
+            <div class="player-sidebar">
+              <h4 class="player-sidebar-title">播放列表</h4>
+                <div class="player-list">
+                  <div
+                    v-for="(item, index) in playList"
+                    :key="item.id || index"
+                    class="player-list-item"
+                    :class="{ active: index === currentPlayIndex }"
+                    @click="selectPlayItem(index)"
+                  >
+                    <span class="player-list-order">{{ index + 1 }}.</span>
+                    <span class="player-list-name">{{ item.storyboardSeqRange || `片段${index + 1}` }}</span>
+                    <span class="player-list-dur">{{ item.duration }}s</span>
+                    <span v-if="index === currentPlayIndex" class="player-list-playing-indicator">▶</span>
+                  </div>
+                </div>
             </div>
           </div>
           <template #footer>
-            <el-button @click="showPlayer = false">关闭</el-button>
+            <el-button @click="closePlayer">关闭</el-button>
           </template>
         </el-dialog>
 
@@ -779,7 +841,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowDown, Warning, InfoFilled, Download, VideoPlay } from '@element-plus/icons-vue'
@@ -802,6 +864,7 @@ import {
   updateStorySummary,
   updateStoryboard,
   updateAssetDesign,
+  getTaskManifest,
   type TaskDetailVO,
   type StoryboardVO,
   type AssetImageVO,
@@ -825,64 +888,6 @@ const storyboardExpanded = ref(false)
 const assetExpanded = ref(false)
 const showFailDetail = ref(false)
 
-// ======== 在线播放器状态 ========
-const showPlayer = ref(false)
-const currentPlayIndex = ref(0)
-const videoElementRef = ref<HTMLVideoElement | null>(null)
-
-// 解析 manifest.json 得到视频列表
-const playList = computed(() => {
-  if (!detail.value.finalWorkManifest) return []
-  try {
-    const manifest = JSON.parse(detail.value.finalWorkManifest)
-    return manifest.videos || []
-  } catch (e) {
-    console.error('Failed to parse manifest:', e)
-    return []
-  }
-})
-
-const currentPlayingUrl = computed(() => {
-  if (playList.value.length === 0) return ''
-  const idx = Math.min(currentPlayIndex.value, playList.value.length - 1)
-  return playList.value[idx]?.originalUrl || ''
-})
-
-const playNextVideo = () => {
-  if (currentPlayIndex.value < playList.value.length - 1) {
-    currentPlayIndex.value++
-    nextTick(() => {
-      videoElementRef.value?.play()
-    })
-  } else {
-    // 播放列表结束
-    showPlayer.value = false
-  }
-}
-
-const startPlay = () => {
-  if (playList.value.length === 0) {
-    ElMessage.warning('暂无可播放的视频')
-    return
-  }
-  currentPlayIndex.value = 0
-  showPlayer.value = true
-  nextTick(() => {
-    videoElementRef.value?.play()
-  })
-}
-
-const onVideoEnded = () => {
-  playNextVideo()
-}
-
-const onVideoError = () => {
-  ElMessage.error('视频加载失败，将尝试播放下一段')
-  setTimeout(() => {
-    playNextVideo()
-  }, 1000)
-}
-
 // ======== 人工审核：JSON 编辑模态框 ========
 const editorDialog = reactive({
   visible: false,
@@ -900,6 +905,224 @@ const regenDialog = reactive({
   item: null as any,
   fields: {} as Record<string, any>,
   onConfirm: null as (() => Promise<void>) | null,
+})
+
+// ======== 视频播放器状态 ========
+const showPlayer = ref(false)
+const videoElRef = ref<HTMLVideoElement | null>(null)
+const currentPlayIndex = ref(0)
+const isPlaying = ref(false)
+type PlayMode = 'sequential' | 'single-loop'
+const playMode = ref<PlayMode>('sequential')
+const playModeLabel: Record<PlayMode, string> = {
+  'sequential': '顺序播放',
+  'single-loop': '单段循环',
+}
+const isSingleLoop = computed(() => playMode.value === 'single-loop')
+const playbackRate = ref(1)
+const runtimeManifest = ref<string>('')
+
+const playList = computed(() => {
+  const manifestStr = runtimeManifest.value || detail.value.finalWorkManifest
+  if (manifestStr) {
+    try {
+      const manifest = JSON.parse(manifestStr)
+      if (manifest?.videos?.length) return manifest.videos
+    } catch (e) {
+      console.error('Failed to parse manifest:', e)
+    }
+  }
+  const videos = detail.value.videos
+  if (videos?.length) {
+    return videos.map((v, idx) => ({
+      id: v.id ?? idx,
+      orderIndex: idx + 1,
+      filename: `片段${idx + 1}.mp4`,
+      sceneGroupId: (v as any).sceneGroupId,
+      storyboardSeqRange: `分镜#${idx + 1}`,
+      duration: v.duration ?? 0,
+      originalUrl: v.videoUrl,
+      coverUrl: v.coverUrl
+    }))
+  }
+  return []
+})
+
+const currentPlayingUrl = computed(() => {
+  if (playList.value.length === 0) return ''
+  const idx = Math.min(currentPlayIndex.value, playList.value.length - 1)
+  return playList.value[idx]?.originalUrl || ''
+})
+
+async function ensureManifest() {
+  if (runtimeManifest.value || detail.value.finalWorkManifest) return
+  const id = taskIdRef.value
+  if (!id) return
+  try {
+    const json = await getTaskManifest(id)
+    if (json) {
+      runtimeManifest.value = json
+      detail.value.finalWorkManifest = json
+    }
+  } catch (_e) {
+    // 静默失败：步骤8已有videos兜底，不弹窗打扰用户
+    console.warn('[player] manifest 加载失败，使用场景视频兜底')
+  }
+}
+
+/** 彻底停止一个 video 元素：静音→暂停→重置时间→清空src→load()，确保没有残留声音 */
+function forceStopVideo(video: HTMLVideoElement | null | undefined) {
+  if (!video) return
+  try {
+    video.pause()
+    video.muted = true
+    video.currentTime = 0
+    video.removeAttribute('src')
+    video.load()
+  } catch (_) { /* ignore */ }
+}
+
+/** 统一的切视频逻辑：复用同一个 video 节点，无缝切换（先静音+停 → 变源 → load → 播 → 解音），避免销毁重建导致闪屏 */
+function switchToIndex(index: number, shouldPlay: boolean = true) {
+  if (index < 0 || index >= playList.value.length) return
+  const v = videoElRef.value
+  if (v) {
+    try {
+      v.pause()
+      v.muted = true
+      v.currentTime = 0
+    } catch (_) { /* ignore */ }
+  }
+  currentPlayIndex.value = index
+  isPlaying.value = shouldPlay
+  nextTick(() => {
+    const v2 = videoElRef.value
+    if (!v2) return
+    v2.playbackRate = playbackRate.value
+    v2.loop = isSingleLoop.value
+    // 强制用新 src 重新开始加载流（防止浏览器复用旧解码缓冲露出上一帧残影）
+    try { v2.load() } catch (_) { /* ignore */ }
+    if (shouldPlay) {
+      v2.play().catch(() => { /* autoplay reject 静默 */ })
+    }
+  })
+}
+
+async function openPlayer() {
+  await ensureManifest()
+  if (playList.value.length === 0) {
+    ElMessage.warning('暂无可播放的视频')
+    return
+  }
+  showPlayer.value = true
+  // 等待对话框挂载 video DOM
+  await nextTick()
+  // 重新初始化：video 节点是新创建的，需显式设置 src + load 才会开始加载
+  const v = videoElRef.value
+  if (!v) return
+  currentPlayIndex.value = 0
+  isPlaying.value = true
+  v.src = currentPlayingUrl.value
+  v.playbackRate = playbackRate.value
+  v.loop = isSingleLoop.value
+  v.muted = false
+  v.currentTime = 0
+  try { v.load() } catch (_) { /* ignore */ }
+  v.play().catch(() => { /* autoplay reject 静默 */ })
+}
+
+function closePlayer() {
+  forceStopVideo(videoElRef.value)
+  isPlaying.value = false
+  showPlayer.value = false
+}
+
+function selectPlayItem(index: number) {
+  switchToIndex(index, true)
+}
+
+function togglePlay() {
+  const video = videoElRef.value
+  if (!video) return
+  if (!video.paused) {
+    video.pause()
+  } else {
+    video.play().catch(() => { /* 用户手动触发失败不弹窗 */ })
+  }
+}
+
+function togglePlayMode() {
+  playMode.value = playMode.value === 'sequential' ? 'single-loop' : 'sequential'
+  // 实时写回当前 video.loop（无需切段立即生效）
+  if (videoElRef.value) {
+    videoElRef.value.loop = playMode.value === 'single-loop'
+  }
+  ElMessage.info(`播放模式：${playModeLabel[playMode.value]}`)
+}
+
+function playNext() {
+  if (currentPlayIndex.value < playList.value.length - 1) {
+    switchToIndex(currentPlayIndex.value + 1, true)
+  } else {
+    isPlaying.value = false
+    if (videoElRef.value) videoElRef.value.pause()
+    if (isSingleLoop.value) {
+      // 单段循环理论上不会走到这里（video.loop=true 不触发 ended），兜底重播本段
+      switchToIndex(currentPlayIndex.value, true)
+    } else {
+      ElMessage.info('已播放到最后一段')
+    }
+  }
+}
+
+function playPrev() {
+  if (currentPlayIndex.value > 0) {
+    switchToIndex(currentPlayIndex.value - 1, true)
+  }
+}
+
+function setPlaybackRate(rate: number) {
+  playbackRate.value = rate
+  if (videoElRef.value) {
+    videoElRef.value.playbackRate = rate
+  }
+}
+
+function onVideoEnded() {
+  playNext()
+}
+
+function onVideoError() {
+  // 静默：单段加载失败不弹窗打扰，1s 后尝试下一段
+  console.warn('[player] 视频加载失败，将尝试下一段:', currentPlayingUrl.value)
+  setTimeout(() => {
+    if (showPlayer.value) playNext()
+  }, 1000)
+}
+
+function onVideoLoaded() {
+  const v = videoElRef.value
+  if (!v) return
+  // 确保切换后倍速 & loop 被正确应用
+  v.playbackRate = playbackRate.value
+  v.loop = isSingleLoop.value
+  // 切视频时 muted=true 防止过渡杂音；加载完恢复音量（除非用户本来就静音了）
+  v.muted = false
+}
+
+// 关闭模态框时（无论是点击关闭按钮还是 × 按钮触发的 v-model）强制停止视频，防止残留声音
+watch(showPlayer, (val) => {
+  if (!val) {
+    // 延迟到 dialog 过渡结束后再停，避免过渡期间的声音残留
+    setTimeout(() => forceStopVideo(videoElRef.value), 300)
+  }
+})
+// 单段循环开关：实时更新当前正在播放的 video.loop（不切段时立即生效）
+watch(isSingleLoop, (val) => {
+  if (videoElRef.value) videoElRef.value.loop = val
+})
+onBeforeUnmount(() => {
+  forceStopVideo(videoElRef.value)
 })
 
 /** 是否允许编辑（人工审核模式 + 已完成的步骤） */
@@ -2330,7 +2553,7 @@ loadDetail()
   z-index: 3;
 }
 .regen-single-btn {
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--cd-bg-card);
   border: 1.5px solid var(--cd-border);
   border-radius: 4px;
   padding: 2px 6px !important;
@@ -2339,7 +2562,7 @@ loadDetail()
   color: var(--cd-text);
 }
 .regen-single-btn:disabled {
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--cd-bg-soft);
   opacity: 0.55;
 }
 .thumb {
@@ -2515,7 +2738,7 @@ loadDetail()
   transition: background 0.15s;
 }
 .fail-summary:hover {
-  background: rgba(245, 108, 108, 0.14);
+  background: var(--cd-bg-soft);
 }
 .fail-summary-text {
   flex: 1;
@@ -2655,10 +2878,10 @@ loadDetail()
   transition: background 0.15s;
 }
 .row-clickable:hover {
-  background: var(--cd-row-hover, #ecf5ff);
+  background: var(--cd-bg-soft);
 }
 .row-clickable:active {
-  background: var(--cd-row-active, #d9ecff);
+  background: var(--cd-bg-soft);
 }
 
 /* 重生成对话框 */
@@ -2776,58 +2999,257 @@ loadDetail()
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 4px 0;
+  gap: 24px;
+  padding: 16px 18px;
 }
 .final-info {
   display: flex;
-  gap: 14px;
+  gap: 16px;
   align-items: center;
   flex: 1;
   min-width: 0;
 }
+.final-cover {
+  flex-shrink: 0;
+}
 .final-cover img {
-  width: 80px;
-  height: 80px;
+  width: 96px;
+  height: 96px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--cd-border, #dcdfe6);
+  display: block;
 }
 .final-meta {
   min-width: 0;
+  flex: 1;
 }
 .final-title {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  color: var(--cd-text, #303133);
 }
 .final-stats {
   display: flex;
-  gap: 12px;
-  font-size: 12px;
-  color: var(--cd-text-sub, #909399);
-  margin-bottom: 4px;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--cd-text-secondary, #909399);
+  margin-bottom: 6px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 .final-desc {
   font-size: 12px;
-  color: var(--cd-text-sub, #909399);
+  color: var(--cd-text-secondary, #909399);
+  line-height: 1.5;
 }
+.final-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 4px 0 4px 16px;
+  border-left: 1px dashed var(--cd-border, #e4e7ed);
+  min-height: 56px;
+}
+/* ======== 成片操作按钮（播放 + 下载，高度完全一致）======== */
+.final-play-btn,
 .final-download-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 20px;
-  background: var(--el-color-success, #67c23a);
-  color: #fff;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
+  padding: 4px 14px !important;
+  line-height: 1.4 !important;
+  font-size: 13px !important;
+  font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
-  transition: opacity 0.2s;
+  border-radius: 6px;
+  min-height: 28px;
+  height: auto;
+  box-sizing: border-box;
+  background: transparent !important;
+  border-width: 2px !important;
+  border-style: solid !important;
+  transition: all 0.2s;
+}
+.final-play-btn {
+  min-width: 110px;
+  border-color: var(--cd-primary) !important;
+  color: var(--cd-primary) !important;
+}
+.final-play-btn:hover {
+  background: var(--cd-bg-soft) !important;
+  border-color: var(--cd-primary-hover) !important;
+  color: var(--cd-primary-hover) !important;
+}
+.final-download-btn {
+  min-width: 160px;
+  border-color: var(--cd-success) !important;
+  color: var(--cd-success) !important;
 }
 .final-download-btn:hover {
-  opacity: 0.85;
-  color: #fff;
+  background: var(--cd-bg-soft) !important;
+  text-decoration: none;
+}
+.final-download-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  background: transparent !important;
+}
+
+/* ======== 视频播放器模态框 ======== */
+.player-container {
+  display: flex;
+  gap: 20px;
+  min-height: 400px;
+}
+.player-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.player-video {
+  width: 100%;
+  max-height: 480px;
+  background-color: #000;
+  border-radius: 8px;
+}
+.player-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--cd-bg-soft);
+  border-radius: 6px;
+  gap: 12px;
+}
+.ctrl-left {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+/* 播放器控制栏 text 按钮：启用=原色，禁用=灰色变淡，避免颜色搞反 */
+.ctrl-left .el-button.is-text:not(.is-disabled),
+.ctrl-right .el-button.is-text:not(.is-disabled) {
+  color: var(--cd-text) !important;
+  font-weight: 600;
+}
+.ctrl-left .el-button.is-text:hover:not(.is-disabled),
+.ctrl-right .el-button.is-text:hover:not(.is-disabled) {
+  color: var(--cd-primary) !important;
+}
+.ctrl-left .el-button.is-text.is-disabled,
+.ctrl-right .el-button.is-text.is-disabled {
+  color: var(--cd-text-secondary) !important;
+  opacity: 0.45 !important;
+  font-weight: 500;
+}
+.ctrl-center {
+  flex: 1;
+  text-align: center;
+}
+.ctrl-right {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.player-now-playing {
+  font-size: 13px;
+  color: var(--cd-text);
+  font-weight: 500;
+}
+.player-dur {
+  color: var(--cd-text-secondary);
+  margin-left: 6px;
+}
+.player-sidebar {
+  width: 240px;
+  border-left: 1px solid var(--cd-border);
+  padding-left: 12px;
+  overflow-y: auto;
+  max-height: 520px;
+  display: flex;
+  flex-direction: column;
+}
+.player-sidebar-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cd-text);
+}
+.player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.player-list-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--cd-bg-card);
+  border: 1px solid var(--cd-border);
+  transition: all 0.15s;
+  font-size: 12px;
+  user-select: none;
+}
+.player-list-item:hover {
+  background: var(--cd-bg-soft);
+  border-color: var(--cd-primary);
+}
+.player-list-item.active {
+  background: var(--cd-bg-soft);
+  border-color: var(--cd-primary);
+  font-weight: 600;
+}
+.player-list-order {
+  font-weight: 700;
+  margin-right: 8px;
+  color: var(--cd-text);
+  min-width: 24px;
+}
+.player-list-name {
+  flex: 1;
+  color: var(--cd-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-list-dur {
+  color: var(--cd-text-secondary);
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+.player-list-playing-indicator {
+  color: var(--cd-primary);
+  font-size: 10px;
+}
+
+/* 播放器对话框暗色主题适配 */
+.player-dialog .el-dialog {
+  background: var(--cd-bg-card);
+  color: var(--cd-text);
+}
+.player-dialog .el-dialog__title {
+  color: var(--cd-text);
+}
+.player-dialog .el-dialog__body {
+  background: var(--cd-bg-card);
+}
+.player-dialog .el-dialog__footer {
+  background: var(--cd-bg-card);
+}
+
+/* 下拉菜单激活项 */
+.el-dropdown-menu__item.is-active {
+  color: var(--cd-primary);
+  font-weight: 600;
 }
 </style>

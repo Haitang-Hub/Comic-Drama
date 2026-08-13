@@ -288,4 +288,15 @@ public class ComicTaskController {
     public Result<List<TaskNodeState>> getNodes(@PathVariable Long id) {
         return Result.ok(taskNodeStateService.listByTaskId(id));
     }
+
+    /**
+     * 获取任务的成片播放 manifest.json。
+     * 1) 优先从 comic_task.final_work_manifest 读取（VideoMergeStepHandler 生成的最终版）
+     * 2) 若为空则从 scene_video 表实时构建并回写 DB（兼容历史任务）
+     * 返回 JSON 字符串（含 videos 数组，前端直接解析即可在线播放）。
+     */
+    @GetMapping(value = "/{id}/manifest", produces = "application/json; charset=utf-8")
+    public Result<String> getManifest(@PathVariable Long id) {
+        return Result.ok(taskService.getOrBuildFinalWorkManifest(id));
+    }
 }

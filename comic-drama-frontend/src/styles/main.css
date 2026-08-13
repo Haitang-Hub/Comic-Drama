@@ -9,6 +9,35 @@
 
 :root {
   color-scheme: light;
+  /* 全局 Element Plus 主题色映射 */
+  --el-color-primary: var(--cd-primary);
+  --el-color-primary-light-3: var(--cd-primary-hover);
+  --el-color-primary-light-5: var(--cd-primary-hover);
+  --el-color-primary-light-7: var(--cd-primary-hover);
+  --el-color-primary-light-9: var(--cd-primary-hover);
+  --el-color-success: var(--cd-success);
+  --el-color-success-light-3: var(--cd-success);
+  --el-color-success-light-5: var(--cd-success);
+  --el-color-success-light-7: var(--cd-success);
+  --el-color-success-light-9: var(--cd-bg-soft);
+  --el-color-warning: var(--cd-warning);
+  --el-color-warning-light-3: var(--cd-warning);
+  --el-color-warning-light-5: var(--cd-warning);
+  --el-color-warning-light-7: var(--cd-warning);
+  --el-color-warning-light-9: var(--cd-bg-soft);
+  --el-color-danger: var(--cd-danger);
+  --el-color-danger-light-3: var(--cd-danger);
+  --el-color-danger-light-5: var(--cd-danger);
+  --el-color-danger-light-7: var(--cd-danger);
+  --el-color-danger-light-9: var(--cd-bg-soft);
+  --el-text-color-primary: var(--cd-text);
+  --el-text-color-regular: var(--cd-text);
+  --el-text-color-secondary: var(--cd-text-secondary);
+  --el-text-color-placeholder: var(--cd-text-secondary);
+  --el-border-color: var(--cd-border);
+  --el-border-color-light: var(--cd-border);
+  --el-fill-color-blank: var(--cd-bg-card);
+  --el-fill-color-light: var(--cd-bg-soft);
 }
 
 /* ===== 绘画本速写风格 base ===== */
@@ -102,6 +131,21 @@ body {
   --el-button-hover-border-color: var(--cd-primary-hover);
   --el-button-active-bg-color: var(--cd-primary-hover);
   --el-button-active-border-color: var(--cd-primary-hover);
+  --el-button-text-color: var(--cd-primary);
+  --el-button-hover-text-color: var(--cd-primary-hover);
+}
+
+/* Element Plus text button hover */
+.el-button.is-text:hover {
+  background-color: var(--cd-bg-soft) !important;
+}
+
+/* Element Plus 成功色按钮对齐 */
+.el-button--success {
+  --el-button-text-color: var(--cd-success);
+  --el-button-hover-text-color: var(--cd-success);
+  --el-button-hover-bg-color: var(--cd-bg-soft);
+  --el-button-hover-border-color: var(--cd-success);
 }
 
 /* 通用 Element Plus 背景与文字色变量 */

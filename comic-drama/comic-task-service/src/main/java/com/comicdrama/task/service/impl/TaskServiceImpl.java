@@ -21,6 +21,7 @@ import com.comicdrama.task.mapper.TaskQueueMapper;
 import com.comicdrama.task.service.TaskService;
 import com.comicdrama.task.vo.TaskDetailVO;
 import com.comicdrama.common.enums.TaskStatus;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
@@ -57,6 +58,7 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
     private final com.comicdrama.common.queue.TaskQueue taskQueue;
     private final RestTemplate restTemplate;
     private final RestTemplateConfig restTemplateConfig;
+    private final ObjectMapper objectMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -986,5 +988,67 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         log.setMessage(message);
         log.setIsPushed(0);
         taskProgressLogMapper.insert(log);
+    }
+
+    @Override
+    public String getOrBuildFinalWorkManifest(Long id) {
+        ComicTask task = this.getById(id);
+        if (task == null) {
+            throw new BizException("任务不存在");
+        }
+        // 1) 优先读已持久化的 manifest
+        if (StringUtils.hasText(task.getFinalWorkManifest())) {
+            return task.getFinalWorkManifest();
+        }
+        // 2) 否则从 scene_video 表动态构建（兼容历史任务/功能发布前已完成的任务）
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id, scene_group_id, video_url, thumbnail_url, duration, resolution, create_time " +
+                        "FROM scene_video WHERE task_id = ? ORDER BY scene_group_id, id",
+                id);
+        int totalDuration = 0;
+        List<Map<String, Object>> entries = new ArrayList<>();
+        int seq = 0;
+        for (Map<String, Object> row : rows) {
+            seq++;
+            Object durationObj = row.get("duration");
+            Integer duration = durationObj instanceof Number ? ((Number) durationObj).intValue() : 0;
+            totalDuration += duration;
+            Long sceneGroupId = row.get("scene_group_id") != null
+                    ? ((Number) row.get("scene_group_id")).longValue() : null;
+            Map<String, Object> entry = new java.util.LinkedHashMap<>();
+            entry.put("orderIndex", seq);
+            entry.put("filename", String.format("%03d_scene%s.mp4",
+                    seq, sceneGroupId != null ? sceneGroupId.toString() : String.valueOf(seq)));
+            entry.put("sceneGroupId", sceneGroupId);
+            entry.put("storyboardSeqRange", (sceneGroupId != null) ? ("scene_" + sceneGroupId) : ("片段_" + seq));
+            entry.put("duration", duration);
+            entry.put("originalUrl", row.get("video_url"));
+            entry.put("coverUrl", row.get("thumbnail_url"));
+            entries.add(entry);
+        }
+        Map<String, Object> manifest = new java.util.LinkedHashMap<>();
+        manifest.put("taskId", task.getId());
+        manifest.put("taskNo", task.getTaskNo());
+        manifest.put("title", task.getTitle());
+        manifest.put("totalDuration", totalDuration);
+        manifest.put("segmentCount", entries.size());
+        manifest.put("resolution", task.getResolution());
+        manifest.put("aspectRatio", task.getAspectRatio());
+        manifest.put("createdAt", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+        manifest.put("videos", entries);
+        try {
+            String json = objectMapper.writeValueAsString(manifest);
+            // 2.1) 回写 DB，避免下次再构建（也顺便让 VideoMergeStepHandler 生成的最终 manifest 保持一致语义）
+            try {
+                jdbcTemplate.update(
+                        "UPDATE comic_task SET final_work_manifest = ? WHERE id = ?",
+                        json, id);
+            } catch (Exception e) {
+                log.warn("回写 final_work_manifest 失败 taskId={}", id, e);
+            }
+            return json;
+        } catch (Exception e) {
+            throw new BizException("构建播放清单失败：" + e.getMessage());
+        }
     }
 }

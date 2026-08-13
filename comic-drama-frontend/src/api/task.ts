@@ -347,6 +347,18 @@ export function pauseTask(id: string, rollbackCurrentStep = false, stopAfterCurr
   return request.put(`/api/task/${id}/pause`, null, { params: { rollbackCurrentStep, stopAfterCurrentStep } })
 }
 
+/**
+ * 获取任务的成片播放清单 manifest.json。
+ * - 若任务已保存 manifest（VideoMergeStepHandler 生成的最终版），直接返回
+ * - 否则后端从 scene_video 实时构建并回写 DB（兼容历史任务）
+ * 返回字符串形式的 JSON（含 videos 数组），前端需再 JSON.parse 取 data
+ */
+export function getTaskManifest(id: string, silentError: boolean = true) {
+  return request.get<any, string>(`/api/task/${id}/manifest`, {
+    headers: silentError ? { 'X-Silent-Error': '1' } : undefined
+  })
+}
+
 export function resumeTask(id: string) {
   return request.put(`/api/task/${id}/resume`)
 }

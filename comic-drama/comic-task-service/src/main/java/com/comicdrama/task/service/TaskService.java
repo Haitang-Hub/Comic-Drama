@@ -62,4 +62,11 @@ public interface TaskService extends IService<ComicTask> {
      * 执行前会清理 [nextStep, nextStep] 的旧产物（保证重新做而不是跳过时出现"成功0/N"）。
      */
     void executeNextStep(Long id);
+
+    /**
+     * 获取任务的成片播放 manifest.json（兼容历史任务）。
+     * 优先读取 comic_task.final_work_manifest 列；若为空则从 scene_video 表实时构建并回写该列。
+     * 返回 JSON 字符串（由 VideoManifestDTO 序列化得到，前端直接解析即可播放）。
+     */
+    String getOrBuildFinalWorkManifest(Long id);
 }

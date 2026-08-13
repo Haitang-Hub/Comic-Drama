@@ -48,25 +48,31 @@ service.interceptors.response.use(
     const status = error?.response?.status
     const errMsg = error?.message || '网络请求失败'
     const code = error?.code
-    // Vite dev proxy 无法连接后端时，返回一个 500/502 响应且消息里常带 ECONNREFUSED
-    const proxyRefused = status >= 500 &&
-      (String(errMsg).includes('ECONNREFUSED') ||
-        (typeof error?.response?.data === 'string' && error.response.data.includes('ECONNREFUSED')))
-    if (code === 'ECONNREFUSED' || proxyRefused) {
-      ElMessage.error('后端服务尚未就绪，请稍等几秒或确认网关/微服务是否启动')
-    } else if (status === 401) {
-      handleUnauthorized()
-      ElMessage.error('登录已过期，请重新登录')
-    } else if (status === 403) {
-      ElMessage.error('无操作权限')
-    } else if (status === 404) {
-      ElMessage.error('请求的资源不存在')
-    } else if (status >= 500) {
-      ElMessage.error('服务器错误，请稍后重试')
-    } else if (error?.code === 'ECONNABORTED') {
-      ElMessage.error('请求超时，请检查网络连接')
-    } else if (!error?.response) {
-      ElMessage.error('网络连接失败，请检查后端服务是否启动')
+    // 允许调用方通过 header: X-Silent-Error=1 静默失败（不弹全局 toast），播放器加载 manifest 等场景使用
+    const silent = error?.config?.headers &&
+      (error.config.headers['X-Silent-Error'] === '1' ||
+        (error.config.headers as any)['x-silent-error'] === '1')
+    if (!silent) {
+      // Vite dev proxy 无法连接后端时，返回一个 500/502 响应且消息里常带 ECONNREFUSED
+      const proxyRefused = status >= 500 &&
+        (String(errMsg).includes('ECONNREFUSED') ||
+          (typeof error?.response?.data === 'string' && error.response.data.includes('ECONNREFUSED')))
+      if (code === 'ECONNREFUSED' || proxyRefused) {
+        ElMessage.error('后端服务尚未就绪，请稍等几秒或确认网关/微服务是否启动')
+      } else if (status === 401) {
+        handleUnauthorized()
+        ElMessage.error('登录已过期，请重新登录')
+      } else if (status === 403) {
+        ElMessage.error('无操作权限')
+      } else if (status === 404) {
+        ElMessage.error('请求的资源不存在')
+      } else if (status >= 500) {
+        ElMessage.error('服务器错误，请稍后重试')
+      } else if (error?.code === 'ECONNABORTED') {
+        ElMessage.error('请求超时，请检查网络连接')
+      } else if (!error?.response) {
+        ElMessage.error('网络连接失败，请检查后端服务是否启动')
+      }
     }
     // 其他错误由调用方决定是否提示
     return Promise.reject(new Error(errMsg))
