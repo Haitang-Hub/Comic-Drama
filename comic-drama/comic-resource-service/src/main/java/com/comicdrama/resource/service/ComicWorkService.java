@@ -8,7 +8,7 @@ import com.comicdrama.resource.entity.ComicWork;
 public interface ComicWorkService extends IService<ComicWork> {
 
     ComicWork createWork(Long taskId, String title, String coverUrl, String finalVideoUrl,
-                         String resolution, Integer duration);
+                         String resolution, Integer duration, Long userId);
 
     ComicWork getByTaskId(Long taskId);
 

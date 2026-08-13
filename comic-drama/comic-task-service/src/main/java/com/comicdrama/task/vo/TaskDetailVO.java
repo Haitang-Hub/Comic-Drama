@@ -39,6 +39,8 @@ public class TaskDetailVO implements Serializable {
     private String startTime;
     private String endTime;
     private Integer totalConsumeTime;
+    private String finalVideoUrl;
+    private String coverUrl;
 
     // ========== 步骤1: 故事摘要 ==========
     private StoryOutlineVO outline;

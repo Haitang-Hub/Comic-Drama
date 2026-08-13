@@ -464,7 +464,7 @@
         <div v-if="detail.videos?.length" class="sketch-card prod-card">
           <div class="card-head">
             <div class="card-head-left">
-              <h3>⑧ 场景视频 / 成片（{{ detail.videos.length }}）</h3>
+              <h3>⑧ 场景视频（{{ detail.videos.length }}）</h3>
             </div>
             <div class="card-head-actions" v-if="showStepControls">
               <el-button size="small" text type="primary"
@@ -488,6 +488,38 @@
                 <span v-if="v.resolution" class="cap-sub">{{ v.resolution }}</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- ⑨ 成片下载（步骤9产物：ZIP播放清单包） -->
+        <div v-if="detail.finalVideoUrl" class="sketch-card prod-card final-card">
+          <div class="card-head">
+            <div class="card-head-left">
+              <h3>⑨ 成片下载</h3>
+              <el-tag size="small" type="success" effect="plain">播放清单方案</el-tag>
+            </div>
+          </div>
+          <div class="final-content">
+            <div class="final-info">
+              <div class="final-cover" v-if="detail.coverUrl">
+                <img :src="detail.coverUrl" alt="封面" />
+              </div>
+              <div class="final-meta">
+                <div class="final-title">{{ detail.title || '未命名作品' }}</div>
+                <div class="final-stats">
+                  <span>共 {{ detail.videos?.length || 0 }} 段视频</span>
+                  <span v-if="detail.duration">总时长 {{ detail.duration }}s</span>
+                  <span v-if="detail.resolution">{{ detail.resolution }}</span>
+                </div>
+                <div class="final-desc">
+                  ZIP 包含：编号视频文件（001_xxx.mp4, 002_xxx.mp4...）+ manifest.json 播放清单
+                </div>
+              </div>
+            </div>
+            <a :href="detail.finalVideoUrl" download class="final-download-btn">
+              <el-icon><Download /></el-icon>
+              下载成片包（ZIP）
+            </a>
           </div>
         </div>
 
@@ -658,7 +690,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowDown, Warning, InfoFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowDown, Warning, InfoFilled, Download } from '@element-plus/icons-vue'
 import {
   getTaskDetail,
   getTaskFailureLogs,
@@ -684,7 +716,7 @@ import {
   type AssetDesignVO
 } from '@/api/task'
 import { useTaskProgress } from '@/composables/useTaskProgress'
-import { TaskStatus, statusMeta, stepName, ART_STYLES, VISUAL_STYLES } from '@/constants/task'
+import { TaskStatus, statusMeta, stepName, ART_STYLES, VISUAL_STYLES, ART_STYLE_LEGACY_MAP, VISUAL_STYLE_LEGACY_MAP } from '@/constants/task'
 import { Doodles } from '@/components/illustrations'
 
 const route = useRoute()
@@ -766,7 +798,8 @@ const hasAnyProduct = computed(() => {
     d.materialPrompts?.length ||
     d.images?.length ||
     d.audios?.length ||
-    d.videos?.length
+    d.videos?.length ||
+    d.finalVideoUrl
   )
 })
 
@@ -910,7 +943,7 @@ function nodeArtifactSummary(step?: number): string {
     case 6: return d.images?.length ? `${d.images.length}张分镜图` : ''
     case 7: return d.audios?.length ? `${d.audios.length}条音频` : (isStepSkippedInDetail(7) ? '已跳过' : '')
     case 8: return d.videos?.length ? `${d.videos.length}段视频` : ''
-    case 9: return d.videos?.length ? '成片已合成' : ''
+    case 9: return d.finalVideoUrl ? '成片包已生成' : (d.videos?.length ? '合成中' : '')
     default: return ''
   }
 }
@@ -922,13 +955,15 @@ function fmtTime(t?: string) {
 
 function artStyleLabel(value?: string): string {
   if (!value) return ''
-  const found = ART_STYLES.find(a => a.value === value)
+  const normalized = ART_STYLE_LEGACY_MAP[value] ?? value
+  const found = ART_STYLES.find(a => a.value === normalized)
   return found ? found.label : value
 }
 
 function visualStyleLabel(value?: string): string {
   if (!value) return ''
-  const found = VISUAL_STYLES.find(s => s.value === value)
+  const normalized = VISUAL_STYLE_LEGACY_MAP[value] ?? value
+  const found = VISUAL_STYLES.find(s => s.value === normalized)
   return found ? found.label : value
 }
 
@@ -2561,5 +2596,68 @@ loadDetail()
   background: var(--cd-bg-soft, #f5f7fa);
   border-radius: 6px;
   border: 1px dashed var(--cd-border, #dcdfe6);
+}
+
+/* ⑨ 成片下载卡片 */
+.final-card {
+  border: 2px solid var(--el-color-success-light-5, #95d475);
+}
+.final-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0;
+}
+.final-info {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.final-cover img {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--cd-border, #dcdfe6);
+}
+.final-meta {
+  min-width: 0;
+}
+.final-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.final-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--cd-text-sub, #909399);
+  margin-bottom: 4px;
+}
+.final-desc {
+  font-size: 12px;
+  color: var(--cd-text-sub, #909399);
+}
+.final-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  background: var(--el-color-success, #67c23a);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+}
+.final-download-btn:hover {
+  opacity: 0.85;
+  color: #fff;
 }
 </style>

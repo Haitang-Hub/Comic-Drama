@@ -64,6 +64,37 @@
 - **版本化资产生成**：资产/分镜/视频均带版本标识与衍生关系，支持回溯与对比
 - **插件化扩展**：自定义步骤 / AI Invoker / 存储后端 / 任务队列
 
+### AI 模型接入生态
+
+引擎通过**协议化 Invoker 抽象**接入 AI 模型，按 `protocol:modelType` 路由，90% 新模型仅需在 `ai_model_config` 表配置即可，无需编码。
+
+#### 已实现模型供应商
+
+| 供应商 | 协议 | 支持类型 | 计费模式 | 典型模型 | 备注 |
+|--------|------|---------|---------|---------|------|
+| **ModelScope 魔搭** | `modelscope-chat` / `modelscope-image` | 文本、图像 | **免费**（平台赠送算力） | DeepSeek-V4-Pro、FLUX.2-KLEIN、Z-Image-Turbo | 默认启用，开箱即用 |
+| **Agnes** | `agnes-video` | 视频 | **免费**（开发者额度） | agnes-video-v2.0 | 多关键帧视频生成，默认启用 |
+| **DeepSeek** | `openai-chat` | 文本 | 免费额度 + 付费 | deepseek-v4-flash / v4-pro | 需自行配置 API Key |
+| **火山引擎 / 豆包** | `ark-image` / `ark-tts` / `ark-video` | 图像、语音、视频 | 付费 | Seedream 5.0、Seed-TTS、Seedance 2.0 | 字节跳动 Ark 平台，需开通付费 |
+| **OpenAI 兼容** | `openai-chat` | 文本 | 取决于服务商 | 任意兼容 `/chat/completions` 的服务 | 如 OpenAI、阿里百炼、腾讯混元等 |
+| **自定义 HTTP** | `custom-http-{name}` | 文本/图像/语音/视频 | 取决于服务商 | 任意 HTTP API | YAML 模板驱动，JSONPath 响应解析 |
+| **Mock 本地模拟** | `openai-chat` | 文本 | 免费（本地） | mock-test-text | 开发联调，无需任何 API Key |
+
+#### 协议-模型类型映射
+
+| 协议标识 | 中文名 | 支持模型类型 | 说明 |
+|---------|--------|------------|------|
+| `openai-chat` | OpenAI 兼容对话 | 文本 (1) | `/chat/completions` 兼容格式，覆盖 DeepSeek / 百炼 / 混元 等 |
+| `modelscope-chat` | 魔搭对话 | 文本 (1) | 魔搭平台对话模型，通过 fallback 路由匹配到 DeepSeekInvoker |
+| `modelscope-image` | 魔搭图像 | 图像 (2) | 魔搭平台图像生成，异步提交+轮询 |
+| `ark-image` | 火山图像 | 图像 (2) | 豆包 Seedream 同步图像生成 |
+| `ark-tts` | 火山语音 | 语音 (3) | 豆包 Seed-TTS 语音合成 |
+| `ark-video` | 火山视频 | 视频 (4) | 豆包 Seedance 视频生成，异步+轮询 |
+| `agnes-video` | Agnes 视频 | 视频 (4) | Agnes V2.0 多关键帧视频生成 |
+| `custom-http` | 自定义 HTTP | 全部 (1/2/3/4) | 配置驱动万能适配器，支持任意 HTTP API |
+
+> 新增模型接入仅需三步：① 在 `ai_model_config` 表插入配置（provider + protocol + api_url + api_key）；② 在 `step_model_binding` 表绑定到对应步骤；③ 重启 workflow-service 即生效。详见 [插件开发指南](./docs/extension/plugin-dev.md)。
+
 ---
 
 ## 三、底层工作流设计原理
@@ -125,7 +156,15 @@ flowchart TD
 | 漫剧风格 visualStyle | 美学调性（中文显示） | 国风 / 新海诚 / 韩漫 / 暗黑童话 / 赛博朋克 / 日式动漫 |
 | 执行模式 execMode | 调度策略 | 0 全自动 / 1 人工审核 |
 
-**模型可插拔**：文本 / 图像 / 语音 / 视频四类模型均通过统一 Invoker 抽象接入，可在 `ai_model_config` 表中配置任意 OpenAI 兼容服务或自定义模型，详见 [插件开发指南](./docs/extension/plugin-dev.md)
+**模型可插拔**：文本 / 图像 / 语音 / 视频四类模型均通过统一 Invoker 抽象接入。默认使用**免费模型**（魔搭 ModelScope + Agnes）即可跑通全流程；也可切换为付费模型（火山引擎 Seedream/Seedance、DeepSeek 等）以获得更高质量。已实现的供应商包括：
+- **魔搭 ModelScope**（免费）：DeepSeek-V4-Pro 文本对话、FLUX.2-KLEIN 图像生成
+- **Agnes**（免费额度）：多关键帧视频生成
+- **DeepSeek**（免费额度+付费）：deepseek-v4-flash / v4-pro 文本对话
+- **火山引擎/豆包**（付费）：Seedream 图像、Seed-TTS 语音、Seedance 视频
+- **OpenAI 兼容服务**：阿里百炼、腾讯混元、OpenAI 等任意 `/chat/completions` 兼容接口
+- **自定义 HTTP**：YAML 模板驱动，支持任意 HTTP API
+
+> 完整供应商列表与协议映射详见 [二、核心能力 → AI 模型接入生态](#ai-模型接入生态)，接入方式详见 [插件开发指南](./docs/extension/plugin-dev.md)
 
 ---
 
@@ -197,6 +236,12 @@ cd ..
 ```
 
 > 测试任务推荐配置：**剧情时长 6s + 分辨率 480p**，可显著减少等待时间与资源消耗。
+>
+> **免费测试模型**：项目默认配置了两个免费模型供应商，无需付费即可跑通全流程：
+> - **魔搭 ModelScope**：平台赠送免费算力，覆盖文本对话（DeepSeek-V4-Pro）和图像生成（FLUX.2-KLEIN、Z-Image-Turbo）
+> - **Agnes**：开发者免费额度，用于多关键帧视频生成（agnes-video-v2.0）
+>
+> 如需更高质量的生成效果，可在前端「系统管理 → AI 模型配置」中切换为付费模型（火山引擎 Seedream/Seedance、DeepSeek 等）。
 > 完整部署手册（环境依赖、SQL 初始化、AI 模型配置、运维问题）详见 [部署手册](./docs/deploy/install.md)。
 
 ---

@@ -80,13 +80,23 @@ export interface ArtStyleOption {
 }
 
 export const ART_STYLES: ArtStyleOption[] = [
-  { value: 'realistic', label: '真人', desc: '写实人像，基于真实摄影质感' },
-  { value: '2d', label: '2D', desc: '二维动画，赛璐璐/厚涂等手绘技法' },
-  { value: '3d', label: '3D', desc: '三维建模，立体渲染质感' },
-  { value: 'oil', label: '厚涂', desc: '油画笔触，厚重颜料堆叠' },
-  { value: 'watercolor', label: '水彩', desc: '水彩画，清透晕染' },
-  { value: 'pixel', label: '像素', desc: '像素点阵，复古游戏感' }
+  { value: '真人', label: '真人', desc: '写实人像，基于真实摄影质感' },
+  { value: '2D', label: '2D', desc: '二维动画，赛璐璐/厚涂等手绘技法' },
+  { value: '3D', label: '3D', desc: '三维建模，立体渲染质感' },
+  { value: '厚涂', label: '厚涂', desc: '油画笔触，厚重颜料堆叠' },
+  { value: '水彩', label: '水彩', desc: '水彩画，清透晕染' },
+  { value: '像素', label: '像素', desc: '像素点阵，复古游戏感' }
 ]
+
+/** 旧版英文值 → 中文值映射（用于历史数据兼容） */
+export const ART_STYLE_LEGACY_MAP: Record<string, string> = {
+  'realistic': '真人',
+  '2d': '2D',
+  '3d': '3D',
+  'oil': '厚涂',
+  'watercolor': '水彩',
+  'pixel': '像素'
+}
 
 /** 风格选项（美学取向/文化调性） */
 export interface VisualStyleOption {
@@ -96,25 +106,39 @@ export interface VisualStyleOption {
 }
 
 export const VISUAL_STYLES: VisualStyleOption[] = [
-  { value: 'chinese', label: '国风', desc: '水墨、汉服、东方意境' },
-  { value: 'shinkai', label: '新海诚', desc: '通透光影、天空、城市、青春感' },
-  { value: 'manhwa', label: '韩漫', desc: '人物比例、美型度、韩式漫画质感' },
-  { value: 'dark_fairy', label: '暗黑童话', desc: '阴郁、怪诞、梦幻氛围' },
-  { value: 'cyberpunk', label: '赛博朋克', desc: '霓虹灯、未来科技、反乌托邦' },
-  { value: 'anime', label: '日式动漫', desc: '经典日式动画风格' }
+  { value: '国风', label: '国风', desc: '水墨、汉服、东方意境' },
+  { value: '新海诚', label: '新海诚', desc: '通透光影、天空、城市、青春感' },
+  { value: '韩漫', label: '韩漫', desc: '人物比例、美型度、韩式漫画质感' },
+  { value: '暗黑童话', label: '暗黑童话', desc: '阴郁、怪诞、梦幻氛围' },
+  { value: '赛博朋克', label: '赛博朋克', desc: '霓虹灯、未来科技、反乌托邦' },
+  { value: '日式动漫', label: '日式动漫', desc: '经典日式动画风格' }
 ]
 
-/** 根据画风+风格组合获取最终视觉定位描述（支持自定义文本） */
+/** 旧版英文值 → 中文值映射（用于历史数据兼容） */
+export const VISUAL_STYLE_LEGACY_MAP: Record<string, string> = {
+  'chinese': '国风',
+  'shinkai': '新海诚',
+  'manhwa': '韩漫',
+  'dark_fairy': '暗黑童话',
+  'cyberpunk': '赛博朋克',
+  'anime': '日式动漫'
+}
+
+/** 根据画风+风格组合获取最终视觉定位描述（支持自定义文本，兼容旧版英文值） */
 export function getVisualPositioning(artValue?: string, styleValue?: string): string {
   if (!artValue && !styleValue) return ''
   const parts: string[] = []
   if (artValue) {
-    const art = ART_STYLES.find(a => a.value === artValue)
-    parts.push(art ? `${art.label}：${art.desc}` : `自定义画风：${artValue}`)
+    // 兼容旧版英文值
+    const normalized = ART_STYLE_LEGACY_MAP[artValue] ?? artValue
+    const art = ART_STYLES.find(a => a.value === normalized)
+    parts.push(art ? `${art.label}：${art.desc}` : `自定义画风：${normalized}`)
   }
   if (styleValue) {
-    const style = VISUAL_STYLES.find(s => s.value === styleValue)
-    parts.push(style ? `${style.label}：${style.desc}` : `自定义风格：${styleValue}`)
+    // 兼容旧版英文值
+    const normalized = VISUAL_STYLE_LEGACY_MAP[styleValue] ?? styleValue
+    const style = VISUAL_STYLES.find(s => s.value === normalized)
+    parts.push(style ? `${style.label}：${style.desc}` : `自定义风格：${normalized}`)
   }
   return parts.join(' + ')
 }

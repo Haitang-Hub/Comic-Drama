@@ -24,11 +24,13 @@ public class ComicWorkServiceImpl extends ServiceImpl<ComicWorkMapper, ComicWork
 
     @Override
     public ComicWork createWork(Long taskId, String title, String coverUrl, String finalVideoUrl,
-                                String resolution, Integer duration) {
+                                String resolution, Integer duration, Long userId) {
         ComicWork work = new ComicWork();
         work.setWorkNo("WK" + IdUtil.getSnowflakeNextIdStr());
         work.setTaskId(taskId);
-        work.setUserId(SecurityUtils.getCurrentUserIdOrNull());
+        // 优先使用显式传入的 userId（跨服务调用），回退到登录上下文，最终回退到 1L
+        Long effectiveUserId = userId != null ? userId : SecurityUtils.getCurrentUserIdOrNull();
+        work.setUserId(effectiveUserId != null ? effectiveUserId : 1L);
         work.setTitle(title);
         work.setCoverUrl(coverUrl);
         work.setVideoUrl(finalVideoUrl);
@@ -39,7 +41,7 @@ public class ComicWorkServiceImpl extends ServiceImpl<ComicWorkMapper, ComicWork
         work.setViewCount(0);
         work.setLikeCount(0);
         this.save(work);
-        log.info("作品创建成功 workNo={}, taskId={}", work.getWorkNo(), taskId);
+        log.info("作品创建成功 workNo={}, taskId={}, userId={}", work.getWorkNo(), taskId, work.getUserId());
         return work;
     }
 

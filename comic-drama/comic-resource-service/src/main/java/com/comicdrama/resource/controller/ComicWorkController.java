@@ -21,8 +21,9 @@ public class ComicWorkController {
                                      @RequestParam(required = false) String coverUrl,
                                      @RequestParam(required = false) String finalVideoUrl,
                                      @RequestParam(required = false) String resolution,
-                                     @RequestParam(required = false) Integer duration) {
-        return Result.ok(comicWorkService.createWork(taskId, title, coverUrl, finalVideoUrl, resolution, duration));
+                                     @RequestParam(required = false) Integer duration,
+                                     @RequestParam(required = false) Long userId) {
+        return Result.ok(comicWorkService.createWork(taskId, title, coverUrl, finalVideoUrl, resolution, duration, userId));
     }
 
     @GetMapping("/task/{taskId}")
