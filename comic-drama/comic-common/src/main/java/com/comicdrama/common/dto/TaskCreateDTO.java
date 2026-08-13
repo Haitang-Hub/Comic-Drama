@@ -28,10 +28,10 @@ public class TaskCreateDTO {
     /** 执行模式：0全自动 1人工审核（每步完成后暂停等待审核） */
     private Integer execMode = 0;
 
-    /** 画风（基础视觉技法：realistic/2d/3d/oil/watercolor/pixel） */
+    /** 画风（基础视觉技法：真人/2D/3D/厚涂/水彩/像素，支持自定义） */
     private String artStyle;
 
-    /** 风格（美学取向：chinese/shinkai/manhwa/dark_fairy/cyberpunk/anime） */
+    /** 风格（美学取向：国风/新海诚/韩漫/暗黑童话/赛博朋克/日式动漫，支持自定义） */
     private String visualStyle;
 
     private String remark;

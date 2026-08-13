@@ -281,6 +281,8 @@ export interface TaskDetailVO {
   startTime?: string
   endTime?: string
   totalConsumeTime?: number
+  finalVideoUrl?: string
+  coverUrl?: string
   outline?: StoryOutlineVO
   sceneGroups?: SceneGroupVO[]
   storyboards?: StoryboardVO[]

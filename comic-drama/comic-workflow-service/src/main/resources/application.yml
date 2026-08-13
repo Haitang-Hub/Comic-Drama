@@ -40,13 +40,18 @@ logging:
 
 comic:
   pipeline:
-    max-steps: 8
+    max-steps: 9
 
 app:
   task-service:
     url: http://127.0.0.1:8103
   gateway:
     url: http://127.0.0.1:8070
+  resource-service:
+    url: http://127.0.0.1:8105
+  video-merge:
+    zip-url-expire-seconds: 604800
+    download-timeout-seconds: 300
 
 # 存储配置（与 resource-service 保持一致）
 storage:

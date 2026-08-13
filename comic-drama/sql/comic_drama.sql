@@ -237,8 +237,8 @@ CREATE TABLE `comic_task` (
   `resolution`                  VARCHAR(16)           DEFAULT '1080p' COMMENT '分辨率（720p/1080p/2k/4k）',
   `voice_enabled`               TINYINT               DEFAULT 0      COMMENT '配音开关：0关闭 1开启',
   `exec_mode`                   TINYINT               DEFAULT 0      COMMENT '执行模式：0全自动 1人工审核',
-  `art_style`                   VARCHAR(32)           DEFAULT NULL   COMMENT '画风（基础视觉技法：realistic/2d/3d/oil/watercolor/pixel）',
-  `visual_style`                VARCHAR(32)           DEFAULT NULL   COMMENT '风格（美学取向：chinese/shinkai/manhwa/dark_fairy/cyberpunk/anime）',
+  `art_style`                   VARCHAR(32)           DEFAULT NULL   COMMENT '画风（基础视觉技法：真人/2D/3D/厚涂/水彩/像素，支持自定义）',
+  `visual_style`                VARCHAR(32)           DEFAULT NULL   COMMENT '风格（美学取向：国风/新海诚/韩漫/暗黑童话/赛博朋克/日式动漫，支持自定义）',
   `status`                      TINYINT               DEFAULT 0      COMMENT '任务状态：0排队 1生成中 2已完成 3失败 4已暂停',
   `current_step`                TINYINT               DEFAULT 0      COMMENT '当前执行步骤（1-9）',
   `progress`                    INT                   DEFAULT 0      COMMENT '总体进度百分比（0-100）',
@@ -784,28 +784,31 @@ WHERE u.username='admin' AND r.role_code='ADMIN';
 -- 自增ID说明：1=deepseek(禁用)      2=modelscope/DeepSeek-V4-Pro(文本)
 --             3=modelscope/Tongyi-Image(图像,文生图) 4=seedream(禁用)
 --             5=seedance_video(视频) 6=seed_tts(音频,禁用)
---             7=modelscope/Qwen-Image-Edit-2511(图像,图生图)
+--             7=modelscope/black-forest-labs/FLUX.2-klein-9B(图像,图生图)
 --             8=mock/mock-test-text(文本,本地测试,127.0.0.1:9876)
+--             9=agnes_video(Agnes Video V2.0 多关键帧视频, 默认禁用,使用时启用并检查API Key)
 -- -----------------------------------------------------------------------------
 INSERT INTO `ai_model_config` (`model_provider`, `model_name`, `model_type`, `protocol`, `capabilities`, `api_url`, `api_key`, `status`) VALUES
 ('deepseek', 'deepseek-v4-flash', 1, 'openai-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'https://api.deepseek.com/v1', 'yourkey', 0),
 ('modelscope', 'deepseek-ai/DeepSeek-V4-Pro', 1, 'modelscope-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'https://api-inference.modelscope.cn/v1', 'yourkey', 1),
 ('modelscope', 'Tongyi-MAI/Z-Image-Turbo', 2, 'modelscope-image', '["IMAGE_TO_IMAGE"]', 'https://api-inference.modelscope.cn/v1', 'yourkey', 1),
 ('seedream', 'doubao-seedream-5-0-260128', 2, 'ark-image', '["IMAGE_TO_IMAGE"]', 'https://ark.cn-beijing.volces.com/api/v3', 'yourkey', 0),
-('seedance', 'doubao-seedance-2-0-mini-260615', 4, 'ark-video', '["FIRST_FRAME_LOCK"]', 'https://ark.cn-beijing.volces.com/api/v3', 'yourkey', 1),
+('seedance', 'doubao-seedance-2-0-mini-260615', 4, 'ark-video', '["FIRST_FRAME_LOCK"]', 'https://ark.cn-beijing.volces.com/api/v3', 'yourkey', 0),
 ('seed_tts', 'Seed-TTS 语音模型', 3, 'ark-tts', '["MULTI_VOICE"]', 'https://ark.cn-beijing.volces.com/api/v3', 'yourkey', 0),
-('modelscope', 'Qwen/Qwen-Image-Edit-2511', 2, 'modelscope-image', '["IMAGE_TO_IMAGE"]', 'https://api-inference.modelscope.cn/v1', 'yourkey', 1),
-('mock', 'mock-test-text', 1, 'openai-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'http://127.0.0.1:9876/v1', 'mock-test-key-12345', 1);
+('modelscope', 'black-forest-labs/FLUX.2-klein-9B', 2, 'modelscope-image', '["IMAGE_TO_IMAGE"]', 'https://api-inference.modelscope.cn/v1', 'yourkey', 1),
+('mock', 'mock-test-text', 1, 'openai-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'http://127.0.0.1:9876/v1', 'mock-test-key-12345', 1),
+('agnes_video', 'agnes-video-v2.0', 4, 'agnes-video', '["FIRST_FRAME_LOCK"]', 'https://apihub.agnes-ai.com', 'yourkey', 1);
 
 -- -----------------------------------------------------------------------------
 -- 9.3 步骤-模型绑定初始数据（8步工作流，步骤拆分后顺序如下）
 -- model_config_id 关联上方 ai_model_config 自增ID：
 --   文本类(1,2,3步)       → 2 (modelscope/DeepSeek-V4-Pro)
 --   资产绘图(4步,文生图)   → 3 (modelscope/Tongyi-Image-Turbo)
---   衍生绘图(5步,图生图)   → 7 (modelscope/Qwen-Image-Edit-2511)
---   分镜绘图(6步)          → 7 (modelscope/Qwen-Image-Edit-2511)
+--   衍生绘图(5步,图生图)   → 7 (modelscope/black-forest-labs/FLUX.2-klein-9B)
+--   分镜绘图(6步)          → 7 (modelscope/black-forest-labs/FLUX.2-klein-9B)
 --   音频类(7步)            → 6 (seed_tts/Seed-TTS)
 --   视频类(8步)            → 5 (seedance_video/doubao-seedance)
+--                            可选 9 (agnes_video/agnes-video-v2.0 多关键帧视频,需先启用)
 -- -----------------------------------------------------------------------------
 INSERT INTO `step_model_binding` (`step_code`, `step_name`, `step_order`, `model_config_id`, `model_type`) VALUES
 ('SUMMARY',          '故事摘要', 1, 8, 1),
@@ -815,7 +818,7 @@ INSERT INTO `step_model_binding` (`step_code`, `step_name`, `step_order`, `model
 ('ASSET_DERIVE',     '衍生绘图', 5, 7, 2),
 ('STORYBOARD_IMAGE', '分镜绘图', 6, 7, 2),
 ('AUDIO',            '配音合成', 7, 6, 3),
-('VIDEO',            '视频生成', 8, 5, 4);
+('VIDEO',            '视频生成', 8, 9, 4);
 
 -- -----------------------------------------------------------------------------
 -- 9.4 系统配置初始数据
@@ -879,8 +882,8 @@ INSERT INTO `prompt_template` (`template_code`, `template_name`, `stage`, `conte
 
 -- 步骤8：视频生成
 ('video', '视频生成模板', 8,
- '分镜脚本：{{storyboards}}\n分镜图片：{{storyboard_image}}\n资产图片：{{asset_images}}\n配音文件：{{audio_files}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n视频比例：{{aspect_ratio}}\n请根以上内容生成分镜视频。',
- '["storyboards","storyboard_image","asset_images","audio_files","art_style","visual_style","aspect_ratio"]', '步骤8：视频生成', 1, 1);
+ '分镜脚本：{{storyboards}}\n分镜图片：{{storyboard_image}}\n配音文件：{{audio_files}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n视频比例：{{aspect_ratio}}\n分镜时长：{{duration}}秒\n请根以上内容生成分镜视频。',
+ '["storyboards","storyboard_image","audio_files","art_style","visual_style","aspect_ratio","duration"]', '步骤8：视频生成', 1, 1);
 
 SET FOREIGN_KEY_CHECKS = 1;
 

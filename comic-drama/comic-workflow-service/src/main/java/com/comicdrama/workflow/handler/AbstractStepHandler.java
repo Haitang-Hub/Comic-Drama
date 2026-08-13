@@ -644,6 +644,17 @@ public abstract class AbstractStepHandler {
     }
 
     /**
+     * 获取当前步骤绑定的模型配置（可能为 null，表示使用默认/负载均衡）。
+     * 供子类在构造请求前判断协议类型，按需走差异化参数装配路径。
+     */
+    protected com.comicdrama.workflow.entity.AiModelConfig getBoundModelConfig() {
+        if (bindingResolver != null) {
+            return bindingResolver.resolveModelConfig(getStep());
+        }
+        return null;
+    }
+
+    /**
      * 查找匹配的 Invoker（协议化路由）。
      * 路由优先级：
      * 1. 按 protocol+type 精确匹配（新路径，O(1) 注册表查询）

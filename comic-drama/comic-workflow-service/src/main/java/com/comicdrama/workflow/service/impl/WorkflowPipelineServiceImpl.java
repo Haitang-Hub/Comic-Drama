@@ -237,14 +237,20 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
             // 单步重生成（startStep == maxStep && maxStep < 9）或从某步续跑未到末端时，不能直接标 DONE，
             // 否则会出现「重新生成步骤4→立即显示进度100%已完成」的 Bug。
             if (maxStep >= 9) {
-                String coverUrl = null;
-                String finalVideoUrl = null;
+                // 从步骤9产物中读取成片信息（由 VideoMergeStepHandler 生成）
+                com.comicdrama.workflow.dto.FinalWorkInfo finalInfo = context.getArtifact(StepEnum.VIDEO_MERGE);
+                String coverUrl = finalInfo != null ? finalInfo.getCoverUrl() : null;
+                String finalVideoUrl = finalInfo != null ? finalInfo.getFinalVideoUrl() : null;
 
                 taskStateManager.markAsDone(taskId, 100, totalConsumeTime,
                         coverUrl, finalVideoUrl, LocalDateTime.now(), maxStep);
 
-                Long workId = workCreator.createComicWork(taskId, taskInfo.userId(), taskInfo.title());
-                log.info("ComicWork 创建成功 workId={}, taskId={}", workId, taskId);
+                // ComicWork 已由 VideoMergeStepHandler 通过 RestTemplate 调用 resource-service 创建
+                if (finalInfo != null && finalInfo.getWorkId() != null) {
+                    log.info("ComicWork 已创建 workId={}, taskId={}", finalInfo.getWorkId(), taskId);
+                } else {
+                    log.warn("ComicWork 创建可能失败，taskId={}", taskId);
+                }
 
                 broadcaster.publish(CacheConstants.CHANNEL_TASK_STATUS,
                         new TaskStatusChangeEvent(this, taskId, 1, 2));

@@ -171,8 +171,8 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         vo.setStartTime(task.getStartTime() != null ? task.getStartTime().toString() : null);
         vo.setEndTime(task.getEndTime() != null ? task.getEndTime().toString() : null);
         vo.setTotalConsumeTime(task.getTotalConsumeTime());
-
-        // 查询产物数据
+        vo.setFinalVideoUrl(task.getFinalVideoUrl());
+        vo.setCoverUrl(task.getCoverUrl());
         vo.setOutline(queryStorySummary(id));
         vo.setStoryboards(queryStoryboards(id));
         vo.setAssetDesigns(queryAssetDesigns(id));
