@@ -55,6 +55,3 @@ data/
 *.sqlite
 dump.rdb
 
-# ===== 临时测试脚本 =====
-gen_video.py
-gen2_video.py

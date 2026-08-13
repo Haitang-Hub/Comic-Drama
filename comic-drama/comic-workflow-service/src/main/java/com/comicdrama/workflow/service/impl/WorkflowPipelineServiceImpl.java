@@ -121,12 +121,10 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
 
             StepContext context = buildStepContext(taskInfo);
 
-            // 产物清理策略：由**调用方（regenerateNode/resume/executeNextStep）**决定，
-            // executeFromStep 本身不再自动清理。
-            // - regenerateNode(step<=3)：会级联清理 [step, 9] 全部下游（因为上游输入已改变，下游旧产物作废）
-            // - regenerateNode(step>=4)：仅清理 [step, step]
-            // - approve/executeNextStep（单步）：清理 [nextStep, nextStep]
-            // - resume（自动模式续跑）：不清理任何产物，保留已完成步骤结果
+            // 产物清理策略：
+            // - regenerateNode：级联清理 [step, 9] 全部下游（上游输入已改变，下游旧产物作废）
+            // - executeFromStep 循环内：每步执行前清理该步旧产物（确保 resolveBatchStartIndex 不跳过）
+            // - resume（自动模式续跑）：无需额外清理，因下游产物已被 regenerateNode 清理或本就不存在
 
             // 重置 startStep 及以后的节点状态（必要：否则失败状态会导致跳过）
             nodeStateManager.resetNodeStatesFrom(taskId, startStep);
@@ -174,11 +172,22 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
                     continue;
                 }
 
+                // 清理当前步骤的旧产物，确保 resolveBatchStartIndex 不会因旧产物而跳过项目。
+                // 场景：上游步骤被重新生成后，下游步骤的旧产物已过期，需要清理后重新生成。
+                // 即使首次执行（无旧产物），清理也是安全的（空操作）。
+                deleteStepArtifacts(taskId, step.getOrder(), step.getOrder());
+                log.info("---------- 已清理步骤{}旧产物，开始执行 ----------", step.getName());
+
                 log.info("---------- 执行步骤：{} (order={}, code={}) ----------",
                         step.getName(), step.getOrder(), step.getCode());
 
                 LocalDateTime stepStart = LocalDateTime.now();
                 long stepStartMs = System.currentTimeMillis();
+
+                // 更新 currentStep 为即将执行的步骤，确保用户暂停时能读取到正确的步骤号。
+                // 不能用 markAsRunning（它会把 currentStep 减 1），改用 updateStepProgress 直接设置。
+                taskStateManager.updateStepProgress(taskId, step.getOrder(), 0,
+                        calculateTotalProgress(step.getOrder(), 0));
 
                 nodeStateManager.saveNodeState(taskId, step.getOrder(), 1,
                         stepStart, null, null, null, null);
@@ -276,10 +285,17 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
                     taskId, pipelineCostMs, e.getStepOrder());
 
             int pausedStep = e.getStepOrder();
-            nodeStateManager.saveNodeState(taskId, pausedStep, 5,
-                    null, LocalDateTime.now(), null, null, "任务已暂停");
-
-            taskStateManager.markAsPaused(taskId, pausedStep, LocalDateTime.now());
+            // 检查任务是否已被用户暂停（可能含回退操作）。
+            // 如果已暂停，用户已设置正确的 currentStep 和 node_state，不要覆盖。
+            // 否则（系统自动暂停等场景），正常标记暂停。
+            int currentStatus = taskStateManager.getStatus(taskId);
+            if (currentStatus != 4) { // 4 = PAUSED
+                nodeStateManager.saveNodeState(taskId, pausedStep, 5,
+                        null, LocalDateTime.now(), null, null, "任务已暂停");
+                taskStateManager.markAsPaused(taskId, pausedStep, LocalDateTime.now());
+            } else {
+                log.info("任务已被用户暂停（可能含回退），保留用户设置的 currentStep，不覆盖 taskId={}", taskId);
+            }
 
             broadcaster.publish(CacheConstants.CHANNEL_TASK_STATUS,
                     new TaskStatusChangeEvent(this, taskId, 1, 4));
@@ -353,16 +369,13 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
             }
         }
 
-        // 1. 删除数据库旧产物（注意区分步骤：上游输入性步骤变了 → 下游依赖产物必然作废）
+        // 1. 删除数据库旧产物：任何步骤重生成都会导致下游产物失效，必须级联清理。
+        // 步骤4(资产绘图)变了 → 步骤5(衍生)6(分镜图)8(视频)9(合并)全部作废
+        // 步骤6(分镜绘图)变了 → 步骤8(视频)9(合并)作废
+        // 以此类推。
         int cleanFrom = stepOrder;
-        int cleanTo = stepOrder;
-        if (stepOrder <= 3) {
-            cleanTo = 9;
-            log.info("[regenerateNode] 步骤{}为上游输入性步骤，级联清理步骤{}~{}的旧产物 taskId={}",
-                    stepOrder, cleanFrom, cleanTo, taskId);
-        } else {
-            log.info("[regenerateNode] 步骤{}为生产步骤，仅清理自身产物 taskId={}", stepOrder, taskId);
-        }
+        int cleanTo = 9;
+        log.info("[regenerateNode] 级联清理步骤{}~{}的旧产物 taskId={}", cleanFrom, cleanTo, taskId);
         deleteStepArtifacts(taskId, cleanFrom, cleanTo);
 
         // 2. 重置 [cleanFrom, 9] 的节点状态
@@ -683,19 +696,20 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
             log.info("========== {}完成 taskId={}, imageId={} ==========", opName, taskId, imageId);
         } catch (BizException e) {
             log.warn("{}业务异常 taskId={}, imageId={}: {}", opName, taskId, imageId, e.getMessage());
+            // 先恢复任务到可操作状态，再报告失败（确保失败状态不被 markBackToIdleState 覆盖）
+            try { markBackToIdleState(taskId, curStatus, targetStep == null ? 0 : targetStep.getOrder(), null); } catch (Exception ignore) {}
             try {
                 failureReporter.reportFailure(taskId, targetStep == null ? 0 : targetStep.getOrder(),
                         opName + "失败", e.getMessage(), e);
             } catch (Exception ignore) {}
-            try { markBackToIdleState(taskId, curStatus, targetStep == null ? 0 : targetStep.getOrder(), null); } catch (Exception ignore) {}
             throw e;
         } catch (Exception e) {
             log.error("{}失败 taskId={}, imageId={}", opName, taskId, imageId, e);
+            try { markBackToIdleState(taskId, curStatus, targetStep == null ? 0 : targetStep.getOrder(), null); } catch (Exception ignore) {}
             try {
                 failureReporter.reportFailure(taskId, targetStep == null ? 0 : targetStep.getOrder(),
                         opName + "失败", e.getMessage(), e);
             } catch (Exception ignore) {}
-            try { markBackToIdleState(taskId, curStatus, targetStep == null ? 0 : targetStep.getOrder(), null); } catch (Exception ignore) {}
             throw new BizException(opName + "失败：" + e.getMessage());
         }
     }
@@ -807,14 +821,193 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
             log.info("========== {}完成 taskId={}, imageId={} ==========", opName, taskId, imageId);
         } catch (BizException e) {
             log.warn("{}业务异常 taskId={}, imageId={}: {}", opName, taskId, imageId, e.getMessage());
-            try { failureReporter.reportFailure(taskId, targetStep.getOrder(), opName + "失败", e.getMessage(), e); } catch (Exception ignore) {}
             try { markBackToIdleState(taskId, curStatus, targetStep.getOrder(), null); } catch (Exception ignore) {}
+            try { failureReporter.reportFailure(taskId, targetStep.getOrder(), opName + "失败", e.getMessage(), e); } catch (Exception ignore) {}
             throw e;
         } catch (Exception e) {
             log.error("{}失败 taskId={}, imageId={}", opName, taskId, imageId, e);
-            try { failureReporter.reportFailure(taskId, targetStep.getOrder(), opName + "失败", e.getMessage(), e); } catch (Exception ignore) {}
             try { markBackToIdleState(taskId, curStatus, targetStep.getOrder(), null); } catch (Exception ignore) {}
+            try { failureReporter.reportFailure(taskId, targetStep.getOrder(), opName + "失败", e.getMessage(), e); } catch (Exception ignore) {}
             throw new BizException(opName + "失败：" + e.getMessage());
+        }
+    }
+
+    @Override
+    public void regenerateSceneVideo(Long taskId, Long videoId, Map<String, Object> overrides) {
+        if (taskId == null || videoId == null) {
+            throw new IllegalArgumentException("taskId 与 videoId 不能为空");
+        }
+
+        String opName = "重新生成单条场景视频";
+        StepEnum targetStep = StepEnum.VIDEO;
+        log.info("========== {} taskId={}, videoId={}, overrides={} ==========", opName, taskId, videoId, overrides);
+        int curStatus = validateSingleRegenerateReady(taskId, opName);
+
+        // 1. 查出旧视频
+        com.comicdrama.workflow.entity.SceneVideo oldVideo = sceneVideoService.getById(videoId);
+        if (oldVideo == null) {
+            throw new BizException("场景视频不存在：videoId=" + videoId);
+        }
+        if (!taskId.equals(oldVideo.getTaskId())) {
+            throw new BizException("场景视频归属任务不匹配，拒绝重生成");
+        }
+
+        Long targetGroupId = oldVideo.getSceneGroupId();
+        String seqRange = oldVideo.getStoryboardSeqRange();
+        // 从 seqRange("N-N") 解析出目标 seq
+        Integer targetSeq = parseSeqStartFromRange(seqRange);
+
+        // 2. 删除旧视频（仅该单条）
+        sceneVideoService.removeById(videoId);
+        log.info("[单条重生成] 已删除旧场景视频，videoId={}, sceneGroupId={}, seqRange={}, taskId={}",
+                videoId, targetGroupId, seqRange, taskId);
+
+        try {
+            taskStateManager.markAsRunning(taskId, targetStep.getOrder(), LocalDateTime.now());
+
+            WorkflowTaskInfo taskInfo = taskInfoProvider.getTaskInfo(taskId);
+            if (taskInfo == null) throw new BizException("任务不存在：taskId=" + taskId);
+
+            StepContext context = buildStepContext(taskInfo);
+            if (overrides != null && !overrides.isEmpty()) {
+                context.setOverrides(overrides);
+            }
+            artifactLoader.loadArtifacts(context, taskId, targetStep.getOrder());
+
+            // 3. 找到 VideoStepHandler，通过 getBatchItems 复用"组内分镜链"构建逻辑（保证与批量路径一致）
+            AbstractStepHandler rawHandler = stepHandlers.stream()
+                    .filter(h -> h.getStep() == targetStep)
+                    .findFirst()
+                    .orElseThrow(() -> new BizException("找不到步骤处理器：" + targetStep.getName()));
+            if (!(rawHandler instanceof com.comicdrama.workflow.handler.VideoStepHandler)) {
+                throw new BizException("步骤处理器类型错误，期望 VideoStepHandler");
+            }
+            com.comicdrama.workflow.handler.VideoStepHandler videoHandler =
+                    (com.comicdrama.workflow.handler.VideoStepHandler) rawHandler;
+
+            // 应用覆盖参数（在 getBatchItems 之后已构建好 item 也不影响，因为下面改的是 context.requestDTO 和 artifact 中 Storyboard 的引用）
+            if (overrides != null && !overrides.isEmpty()) {
+                TaskCreateDTO dto = context.getRequestDTO();
+                if (dto != null) {
+                    if (overrides.containsKey("artStyle")) {
+                        dto.setArtStyle((String) overrides.get("artStyle"));
+                    }
+                    if (overrides.containsKey("visualStyle")) {
+                        dto.setVisualStyle((String) overrides.get("visualStyle"));
+                    }
+                }
+                // duration 覆盖：修改目标 Storyboard 的 duration（会被 processBatchItem 内 buildAgnesRequest 用到）
+                if (overrides.containsKey("duration") && targetSeq != null) {
+                    try {
+                        int targetDuration = Integer.parseInt(String.valueOf(overrides.get("duration")));
+                        java.util.List<com.comicdrama.workflow.entity.Storyboard> storyboards =
+                                context.getArtifact(StepEnum.STORYBOARD);
+                        if (storyboards != null) {
+                            for (com.comicdrama.workflow.entity.Storyboard sb : storyboards) {
+                                if (targetSeq.equals(sb.getSeq())) {
+                                    sb.setDuration(targetDuration);
+                                    log.info("[单条重生成] 已覆盖目标分镜 seq={} duration={}", targetSeq, targetDuration);
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Exception ignore) {
+                        log.warn("[单条重生成] overrides.duration 解析失败：{}", overrides.get("duration"));
+                    }
+                }
+                log.info("[单条重生成] 已应用覆盖参数: {}", overrides);
+            }
+
+            // 4. 调用 getBatchItemsPublic 构建所有分镜 batchItem（与批量生成路径完全一致的 isFirstInGroup / prevImageUrl 链）
+            java.util.List<Object> allItems;
+            {
+                java.util.List<Object> gen = (java.util.List<Object>) videoHandler.getBatchItemsPublic(context);
+                allItems = gen != null ? gen : new java.util.ArrayList<>();
+            }
+
+            // 5. 找到目标 item：groupId 和 seq 都匹配
+            Object targetItem = null;
+            int targetIndex = -1;
+            for (int i = 0; i < allItems.size(); i++) {
+                Object it = allItems.get(i);
+                if (!(it instanceof com.comicdrama.workflow.handler.VideoStepHandler.StoryboardBatchItem)) continue;
+                com.comicdrama.workflow.handler.VideoStepHandler.StoryboardBatchItem sbItem =
+                        (com.comicdrama.workflow.handler.VideoStepHandler.StoryboardBatchItem) it;
+                boolean groupMatch = targetGroupId == null
+                        ? (sbItem.groupId == null)
+                        : targetGroupId.equals(sbItem.groupId);
+                boolean seqMatch = (targetSeq == null)
+                        || (sbItem.sb != null && targetSeq.equals(sbItem.sb.getSeq()));
+                // storyboardIds 匹配：防止 groupId 相同但对应旧视频的 Storyboard 已被替换
+                boolean sbIdMatch = true;
+                if (oldVideo.getStoryboardIds() != null && sbItem.sb != null && sbItem.sb.getId() != null) {
+                    String expected = String.valueOf(sbItem.sb.getId());
+                    sbIdMatch = oldVideo.getStoryboardIds().contains(expected);
+                }
+                if (groupMatch && seqMatch && sbIdMatch) {
+                    targetItem = it;
+                    targetIndex = i;
+                    break;
+                }
+            }
+            if (targetItem == null) {
+                throw new BizException("无法定位该视频对应的分镜 item（sceneGroupId=" + targetGroupId
+                        + ", seqRange=" + seqRange + "），无法重生成");
+            }
+
+            nodeStateManager.saveNodeState(taskId, targetStep.getOrder(), 1, LocalDateTime.now(),
+                    null, null, null, null);
+
+            java.time.LocalDateTime stepStart = LocalDateTime.now();
+            long stepStartMs = System.currentTimeMillis();
+
+            // 6. 单个分镜调用 AI 生成视频
+            Object result = videoHandler.processBatchItem(targetItem, targetIndex, context);
+            if (result == null) {
+                throw new BizException(opName + "失败：AI 返回空结果，请稍后重试");
+            }
+            videoHandler.saveBatchResult(targetItem, result, context);
+
+            long durationMs = System.currentTimeMillis() - stepStartMs;
+            nodeStateManager.saveNodeState(taskId, targetStep.getOrder(), 2, stepStart,
+                    LocalDateTime.now(), durationMs, null, null);
+
+            int totalProgress = calculateTotalProgress(targetStep.getOrder(), 100);
+            taskStateManager.updateStepProgress(taskId, targetStep.getOrder(), 100, totalProgress);
+
+            broadcaster.publish(com.comicdrama.common.constant.CacheConstants.CHANNEL_TASK_PROGRESS,
+                    new TaskProgressEvent(this, taskId, targetStep.getOrder(), targetStep.getCode(),
+                            100, totalProgress, "单条场景视频已重生成"));
+
+            markBackToIdleState(taskId, curStatus, targetStep.getOrder(), totalProgress);
+
+            log.info("========== {}完成 taskId={}, videoId={}, seq={} ==========",
+                    opName, taskId, videoId, targetSeq);
+        } catch (BizException e) {
+            log.warn("{}业务异常 taskId={}, videoId={}: {}", opName, taskId, videoId, e.getMessage());
+            try { markBackToIdleState(taskId, curStatus, targetStep.getOrder(), null); } catch (Exception ignore) {}
+            try { failureReporter.reportFailure(taskId, targetStep.getOrder(), opName + "失败", e.getMessage(), e); } catch (Exception ignore) {}
+            throw e;
+        } catch (Exception e) {
+            log.error("{}失败 taskId={}, videoId={}", opName, taskId, videoId, e);
+            try { markBackToIdleState(taskId, curStatus, targetStep.getOrder(), null); } catch (Exception ignore) {}
+            try { failureReporter.reportFailure(taskId, targetStep.getOrder(), opName + "失败", e.getMessage(), e); } catch (Exception ignore) {}
+            throw new BizException(opName + "失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 从 scene_video.storyboard_seq_range 解析出首个 seq。
+     * 新格式："N-N"（单分镜）→ 返回 N；旧格式兼容："M-N"（多帧合并，兼容兜底）→ 返回 M。
+     */
+    private Integer parseSeqStartFromRange(String seqRange) {
+        if (seqRange == null || seqRange.isEmpty()) return null;
+        try {
+            int hyphen = seqRange.indexOf('-');
+            String first = (hyphen >= 0) ? seqRange.substring(0, hyphen) : seqRange;
+            return Integer.parseInt(first.trim());
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -829,9 +1022,7 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
     private void markBackToIdleState(Long taskId, int originalStatus, Integer stepOrder, Integer totalProgress) {
         int target;
         String targetLabel;
-        if (originalStatus == 3) {
-            target = 3; targetLabel = "失败";
-        } else if (originalStatus == 2) {
+        if (originalStatus == 2) {
             target = 2; targetLabel = "已完成";
         } else {
             target = 4; targetLabel = "已暂停";
@@ -845,7 +1036,6 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
                 taskStateManager.updateStepProgress(taskId, 9, 100, totalProgress);
             }
         }
-        // 对状态 3 不额外改动失败状态，避免覆盖失败信息
 
         broadcaster.publish(com.comicdrama.common.constant.CacheConstants.CHANNEL_TASK_STATUS,
                 new TaskStatusChangeEvent(this, taskId, 1, target));

@@ -312,6 +312,8 @@
                   text
                   type="primary"
                   class="regen-single-btn"
+                  :disabled="!canRegenerate"
+                  :title="regenerateDisabledHint"
                   @click.stop="openRegenDialog(4, img)"
                 >重生成</el-button>
               </div>
@@ -351,6 +353,8 @@
                   text
                   type="primary"
                   class="regen-single-btn"
+                  :disabled="!canRegenerate"
+                  :title="regenerateDisabledHint"
                   @click.stop="openRegenDialog(5, img)"
                 >重生成</el-button>
               </div>
@@ -411,6 +415,8 @@
                   text
                   type="primary"
                   class="regen-single-btn"
+                  :disabled="!canRegenerate"
+                  :title="regenerateDisabledHint"
                   @click.stop="openRegenDialog(6, img)"
                 >重生成</el-button>
               </div>
@@ -475,6 +481,16 @@
           </div>
           <div class="video-grid">
             <div v-for="v in detail.videos" :key="v.id ?? v.sceneIndex" class="video-item">
+              <div v-if="v.id && showStepControls" class="vid-actions">
+                <el-button
+                  size="small"
+                  text
+                  type="primary"
+                  class="regen-single-btn"
+                  :disabled="!canRegenerate"
+                  @click.stop="openRegenDialog(8, v)"
+                >重生成</el-button>
+              </div>
               <video
                 :src="v.videoUrl"
                 :poster="v.coverUrl"
@@ -633,16 +649,29 @@
   >
     <div class="regen-dialog-body">
       <div v-if="regenDialog.item" class="regen-preview">
+        <!-- 视频预览（step 8） -->
+        <video
+          v-if="regenDialog.step === 8"
+          :src="regenDialog.item.videoUrl"
+          :poster="regenDialog.item.coverUrl"
+          controls
+          preload="metadata"
+          class="regen-thumb regen-video-thumb"
+        />
+        <!-- 图片预览（step 4/5/6） -->
         <el-image
+          v-else
           :src="regenDialog.item.thumbnailUrl || regenDialog.item.imageUrl"
           fit="cover"
           class="regen-thumb"
         />
         <div class="regen-meta">
-          <div class="regen-label">资产名称：</div>
-          <div class="regen-value">{{ regenDialog.item.assetName || regenDialog.item.sceneIndex }}</div>
+          <div class="regen-label">{{ regenDialog.step === 8 ? '分镜序号：' : (regenDialog.item.assetName ? '资产名称：' : '分镜序号：') }}</div>
+          <div class="regen-value">{{ regenDialog.item.assetName || `#${regenDialog.item.sceneIndex}` }}</div>
           <div class="regen-label">所属步骤：</div>
           <div class="regen-value">步骤{{ regenDialog.step }}</div>
+          <div v-if="regenDialog.step === 8 && regenDialog.item.duration" class="regen-label">原时长：</div>
+          <div v-if="regenDialog.step === 8 && regenDialog.item.duration" class="regen-value">{{ regenDialog.item.duration }}s</div>
         </div>
       </div>
 
@@ -664,6 +693,19 @@
             :rows="3"
             placeholder="修改分镜画面描述以重新生成图片"
           />
+        </div>
+        <div v-if="regenDialog.step === 8" class="regen-form-item">
+          <label class="regen-form-label">时长（秒）</label>
+          <el-input-number
+            v-model="regenDialog.fields.duration"
+            :min="5"
+            :max="60"
+            :step="1"
+            controls-position="right"
+            size="default"
+            placeholder="修改单条视频时长，单位秒（建议5-60s）"
+          />
+          <div class="regen-hint">提示：Agnes 视频模型最少5秒。组内后续帧的「前帧→本帧」连贯插值会占用总时长。</div>
         </div>
 
         <div class="regen-form-item">
@@ -702,6 +744,7 @@ import {
   regenerateNode,
   regenerateAssetImage,
   regenerateStoryboardImage,
+  regenerateSceneVideo,
   resumeFromFailure,
   resumeFromStep,
   approveTask,
@@ -1052,34 +1095,15 @@ async function handlePause() {
   const id = taskIdRef.value
   if (!id) return
   try {
-    // 使用 actions 模式的确认对话框，提供两种暂停语义
-    const { value } = await ElMessageBox({
-      title: '暂停任务',
-      message: '请选择暂停方式：',
-      showCancelButton: true,
-      confirmButtonText: '完成此阶段',
-      cancelButtonText: '回退当前步骤',
-      distinguishCancelAndClose: true,
-      customClass: 'pause-choice-dialog',
-    } as any)
-    // 用户点击 confirm（完成此阶段）：设置计划暂停标记，等当前步跑完后自动停（保留完整产物）
-    await pauseTask(id, false)
-    ElMessage.success('已设置「完成此阶段」，当前步骤执行完毕后自动暂停')
+    // 直接暂停：当前正在生成的单张产物跑完后就停止（不再开始下一张），
+    // 保留已完成产物，下次继续从当前步骤未完成的项目续跑（resolveBatchStartIndex 断点续跑）。
+    // 不再支持"回退上一步"功能。
+    await pauseTask(id, false, false)
+    ElMessage.success('已暂停：当前产物生成完成后将停止，下次继续从断点续跑')
     loadDetail()
     refresh()
-  } catch (action: any) {
-    if (action === 'cancel') {
-      // 用户点击 cancel（回退当前步骤）：删除当前步及下游半成品，currentStep 回退，立即标记暂停
-      try {
-        await pauseTask(id, true)
-        ElMessage.success('已暂停并回退当前步骤，下次继续时将重新执行该步骤')
-        loadDetail()
-        refresh()
-      } catch (e: any) {
-        ElMessage.error(e?.message || '回退暂停失败')
-      }
-    }
-    // 'close' / 'mask' 操作不做任何处理
+  } catch (e: any) {
+    ElMessage.error(e?.message || '暂停失败')
   }
 }
 
@@ -1376,12 +1400,14 @@ function openRegenDialog(step: number, item: any) {
     4: '资产绘图',
     5: '衍生绘图',
     6: '分镜绘图',
+    8: '场景视频',
   }
   regenDialog.title = `重新生成${stepNames[step] || ''}`
 
-  // 从对应数据源查找原始描述
+  // 从对应数据源查找原始描述/时长
   let assetDesc = ''
   let visualDesc = ''
+  let duration: number | null = null
 
   if (step === 4 || step === 5) {
     // 从资产设计列表中查找 assetDesc
@@ -1401,11 +1427,24 @@ function openRegenDialog(step: number, item: any) {
         visualDesc = matched.visualDesc || ''
       }
     }
+  } else if (step === 8) {
+    // 优先使用现有 SceneVideo 的 duration，兜底从分镜脚本 seq 中查找
+    if (typeof item.duration === 'number') {
+      duration = Math.round(item.duration)
+    } else if (detail.value.storyboards && item.sceneIndex != null) {
+      const matched = detail.value.storyboards.find((s: any) => s.sceneIndex === item.sceneIndex)
+      if (matched && typeof matched.duration === 'number') {
+        duration = matched.duration
+      }
+    }
+    // Agnes 最小 5s 兜底
+    if (duration == null || duration < 5) duration = 6
   }
 
   regenDialog.fields = {
     assetDesc,
     visualDesc,
+    duration,
     artStyle: detail.value.artStyle || '',
     visualStyle: detail.value.visualStyle || '',
   }
@@ -1427,6 +1466,8 @@ async function confirmRegenSingle() {
     if (f.assetDesc) params.assetDesc = f.assetDesc
   } else if (step === 6) {
     if (f.visualDesc) params.visualDesc = f.visualDesc
+  } else if (step === 8) {
+    if (typeof f.duration === 'number') params.duration = f.duration
   }
   if (f.artStyle) params.artStyle = f.artStyle
   if (f.visualStyle) params.visualStyle = f.visualStyle
@@ -1436,6 +1477,8 @@ async function confirmRegenSingle() {
       await regenerateAssetImage(taskId, String(itemId), params)
     } else if (step === 6) {
       await regenerateStoryboardImage(taskId, String(itemId), params)
+    } else if (step === 8) {
+      await regenerateSceneVideo(taskId, String(itemId), params)
     }
     ElMessage.success('已提交重新生成')
     regenDialog.visible = false
@@ -2267,9 +2310,16 @@ loadDetail()
   gap: 12px;
 }
 .video-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.vid-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
 }
 .video-player {
   width: 100%;
@@ -2524,6 +2574,12 @@ loadDetail()
   border-radius: 6px;
   flex-shrink: 0;
 }
+.regen-video-thumb {
+  width: 180px;
+  height: 101px; /* 16:9 */
+  background: #000;
+  object-fit: cover;
+}
 .regen-meta {
   display: flex;
   flex-direction: column;
@@ -2596,6 +2652,12 @@ loadDetail()
   background: var(--cd-bg-soft, #f5f7fa);
   border-radius: 6px;
   border: 1px dashed var(--cd-border, #dcdfe6);
+}
+.regen-hint {
+  font-size: 11px;
+  color: var(--cd-text-secondary, #999);
+  margin-top: 2px;
+  line-height: 1.6;
 }
 
 /* ⑨ 成片下载卡片 */

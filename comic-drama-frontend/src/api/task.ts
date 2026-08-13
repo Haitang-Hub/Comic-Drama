@@ -341,8 +341,8 @@ export function deleteTask(id: string) {
   return request.delete(`/api/task/${id}`)
 }
 
-export function pauseTask(id: string, rollbackCurrentStep = false) {
-  return request.put(`/api/task/${id}/pause`, null, { params: { rollbackCurrentStep } })
+export function pauseTask(id: string, rollbackCurrentStep = false, stopAfterCurrentStep = false) {
+  return request.put(`/api/task/${id}/pause`, null, { params: { rollbackCurrentStep, stopAfterCurrentStep } })
 }
 
 export function resumeTask(id: string) {
@@ -383,6 +383,11 @@ export function regenerateAssetImage(taskId: string, imageId: string | number, p
 /** 单张分镜图重生成（步骤6） */
 export function regenerateStoryboardImage(taskId: string, imageId: string | number, params?: Record<string, any>) {
   return request.post(`/api/task/${taskId}/regenerate/storyboard-image/${imageId}`, params || {})
+}
+
+/** 单条场景视频重生成（步骤8） */
+export function regenerateSceneVideo(taskId: string, videoId: string | number, params?: Record<string, any>) {
+  return request.post(`/api/task/${taskId}/regenerate/scene-video/${videoId}`, params || {})
 }
 
 export const getQueuePage = (params: any) => request.get('/api/queue/page', { params })

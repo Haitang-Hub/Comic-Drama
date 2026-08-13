@@ -46,4 +46,11 @@ public interface WorkflowClient {
     @PostMapping("/regenerate/storyboard-image")
     Map<String, Object> regenerateStoryboardImage(@RequestBody Map<String, Object> request,
                                                   @RequestParam("imageId") Long imageId);
+
+    /**
+     * 单条场景视频重生成（步骤8）
+     */
+    @PostMapping("/regenerate/scene-video")
+    Map<String, Object> regenerateSceneVideo(@RequestBody Map<String, Object> request,
+                                             @RequestParam("videoId") Long videoId);
 }

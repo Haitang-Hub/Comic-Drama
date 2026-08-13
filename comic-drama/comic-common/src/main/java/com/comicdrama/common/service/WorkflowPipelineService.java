@@ -122,6 +122,25 @@ public interface WorkflowPipelineService {
     void regenerateStoryboardImage(Long taskId, Long imageId, Map<String, Object> overrides);
 
     /**
+     * 单条场景视频重生成（步骤8）。
+     *
+     * @param taskId   任务 ID
+     * @param videoId  场景视频主键 ID（scene_video 表 id）
+     */
+    default void regenerateSceneVideo(Long taskId, Long videoId) {
+        regenerateSceneVideo(taskId, videoId, null);
+    }
+
+    /**
+     * 单条场景视频重生成（带参数覆盖）。
+     *
+     * @param taskId    任务 ID
+     * @param videoId   场景视频主键 ID
+     * @param overrides 参数覆盖（如 duration、prompt、artStyle、visualStyle 等）
+     */
+    void regenerateSceneVideo(Long taskId, Long videoId, Map<String, Object> overrides);
+
+    /**
      * 断点续跑：从最近失败步骤开始继续执行（Phase-3）。
      *
      * @param taskId 任务 ID

@@ -2,12 +2,16 @@ package com.comicdrama.workflow.handler;
 
 import com.comicdrama.workflow.entity.AssetDesign;
 import com.comicdrama.workflow.entity.AssetImage;
+import com.comicdrama.workflow.entity.SceneVideo;
 import com.comicdrama.workflow.entity.StorySummary;
 import com.comicdrama.workflow.entity.Storyboard;
+import com.comicdrama.workflow.entity.StoryboardAudio;
 import com.comicdrama.workflow.entity.StoryboardImage;
 import com.comicdrama.workflow.service.AssetDesignService;
 import com.comicdrama.workflow.service.AssetImageService;
+import com.comicdrama.workflow.service.SceneVideoService;
 import com.comicdrama.workflow.service.StorySummaryService;
+import com.comicdrama.workflow.service.StoryboardAudioService;
 import com.comicdrama.workflow.service.StoryboardImageService;
 import com.comicdrama.workflow.service.StoryboardService;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +37,8 @@ public class ArtifactLoader {
     private final AssetDesignService assetDesignService;
     private final AssetImageService assetImageService;
     private final StoryboardImageService storyboardImageService;
+    private final StoryboardAudioService storyboardAudioService;
+    private final SceneVideoService sceneVideoService;
 
     /**
      * 从数据库加载已完成步骤的产物到 context。
@@ -115,6 +121,28 @@ public class ArtifactLoader {
                 log.info("已恢复步骤6产物 [STORYBOARD_IMAGE], count={}", imageList.size());
             } else {
                 log.warn("步骤6产物 [STORYBOARD_IMAGE] 数据库中未找到或为空，taskId={}", taskId);
+            }
+        }
+
+        // 步骤7：配音（列表，可能为空——如未启用配音步骤）
+        if (startStep > StepEnum.AUDIO.getOrder()) {
+            List<StoryboardAudio> audios = storyboardAudioService.listByTaskId(taskId);
+            List<StoryboardAudio> audioList = audios != null ? audios : java.util.Collections.emptyList();
+            context.putArtifact(StepEnum.AUDIO, audioList);
+            restored++;
+            log.info("已恢复步骤7产物 [AUDIO], count={}", audioList.size());
+        }
+
+        // 步骤8：场景视频（列表）
+        if (startStep > StepEnum.VIDEO.getOrder()) {
+            List<SceneVideo> videos = sceneVideoService.listByTaskId(taskId);
+            List<SceneVideo> videoList = videos != null ? videos : java.util.Collections.emptyList();
+            context.putArtifact(StepEnum.VIDEO, videoList);
+            restored++;
+            if (!videoList.isEmpty()) {
+                log.info("已恢复步骤8产物 [VIDEO], count={}", videoList.size());
+            } else {
+                log.warn("步骤8产物 [VIDEO] 数据库中未找到或为空，taskId={}", taskId);
             }
         }
 

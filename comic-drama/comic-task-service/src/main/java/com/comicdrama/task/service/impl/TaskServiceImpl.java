@@ -686,9 +686,11 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         }
 
         int currentStep = task.getCurrentStep() == null ? 0 : task.getCurrentStep();
-        int nextStep = Math.max(1, currentStep + 1);
+        // 暂停时 currentStep 就是"正在执行的步骤"（步骤N生成到一半，currentStep=N），
+        // 继续时应该从该步骤本身续跑，resolveBatchStartIndex 会跳过已完成的项。
+        int startStep = Math.max(1, currentStep);
 
-        if (nextStep > 9) {
+        if (startStep > 9) {
             // 已到最后一步，直接标完成
             ComicTask done = new ComicTask();
             done.setId(id);
@@ -700,26 +702,26 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
             return;
         }
 
-        // 标记 RUNNING
+        // 标记 RUNNING（startStep 即续跑的起始步骤）
         ComicTask running = new ComicTask();
         running.setId(id);
         running.setStatus(TaskStatus.RUNNING.getCode());
-        running.setCurrentStep(nextStep);
+        running.setCurrentStep(startStep);
         running.setEndTime(null);
         this.updateById(running);
         writeProgressLog(id, currentStep, null, null, task.getProgress(), task.getProgress(),
-                "继续（自动续跑全部）：步骤 " + currentStep + " → 开始执行步骤 " + nextStep + "，后续步骤将自动跑满");
+                "继续（断点续跑）：从步骤 " + startStep + " 的断点继续，已完成产物不重复生成");
 
-        // 调用 workflow-service 续跑：startStep = nextStep, maxStep = 9，
-        // 注意：resume 是「续跑未完成的工作」语义，因此不清理任何产物（executeFromStep 也已改为不自动清理）
+        // 调用 workflow-service 续跑：startStep = startStep, maxStep = 9，
+        // 保留已完成产物，断点续跑依赖各步骤 Handler 的 resolveBatchStartIndex 跳过已完成项。
         try {
             String url = restTemplateConfig.getWorkflowServiceUrl()
-                    + "/api/workflow/pipeline/resume?startStep=" + nextStep + "&maxStep=9";
+                    + "/api/workflow/pipeline/resume?startStep=" + startStep + "&maxStep=9";
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<java.util.Map<String, Object>> entity = new HttpEntity<>(buildResumeRequest(task, 9), headers);
 
-            log.info("resume：调用 workflow-service 自动续跑全部 taskId={}, startStep={}", id, nextStep);
+            log.info("resume：调用 workflow-service 断点续跑 taskId={}, startStep={}", id, startStep);
             ResponseEntity<com.comicdrama.common.result.Result<Void>> response = restTemplate.exchange(
                     url, HttpMethod.POST, entity,
                     new ParameterizedTypeReference<com.comicdrama.common.result.Result<Void>>() {});

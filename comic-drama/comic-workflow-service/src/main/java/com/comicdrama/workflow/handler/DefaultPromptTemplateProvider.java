@@ -125,9 +125,11 @@ public class DefaultPromptTemplateProvider implements PromptTemplateProvider {
             // 步骤6：分镜绘图
             case "storyboard_image" -> """
                     画面描述：{{visual_desc}}
-                    并根据资产图片：{{asset_images}}
+                    角色外观描述（必须严格保持人物外观一致）：
+                    {{character_descriptions}}
+                    参考资产图片：{{asset_images}}
                     画风+风格（视觉定位）：{{art_style}}+{{visual_style}}
-                    根据以上内容生成分镜图片
+                    根据以上内容生成分镜图片，角色外观必须与描述完全一致
                     """;
 
             case "audio" -> """
