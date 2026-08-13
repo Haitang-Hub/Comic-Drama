@@ -125,6 +125,10 @@ public class ImageStepHandler extends AbstractStepHandler {
         String refImageUrl = matched.primaryImageUrl;
         String assetImagesText = matched.formattedText;
 
+        // 方案C：从 AssetDesign 提取角色外观描述，注入 prompt 锁定人物一致性
+        List<AssetDesign> assetDesigns = context.getArtifact(StepEnum.ASSET_DESIGN);
+        String characterDescriptions = buildCharacterDescriptions(sb, assetDesigns);
+
         String artStyle = context.getRequestDTO().getArtStyle();
         String visualStyle = context.getRequestDTO().getVisualStyle();
 
@@ -136,6 +140,7 @@ public class ImageStepHandler extends AbstractStepHandler {
         String template = loadPromptTemplate("storyboard_image");
         String prompt = fillTemplate(template,
                 "visual_desc", sb.getVisualDesc() != null ? sb.getVisualDesc() : "",
+                "character_descriptions", characterDescriptions,
                 "asset_images", assetImagesText,
                 "art_style", artStyle != null ? artStyle : "",
                 "visual_style", visualStyle != null ? visualStyle : "");
@@ -232,11 +237,13 @@ public class ImageStepHandler extends AbstractStepHandler {
         // 匹配道具图片
         collectMatchedImages(sb.getProps(), imageByAssetName, result.propImages, "道具", text);
 
-        // 主参考图：优先场景，其次第一个角色
-        if (!result.sceneImages.isEmpty()) {
-            result.primaryImageUrl = result.sceneImages.get(0).getImageUrl();
-        } else if (!result.characterImages.isEmpty()) {
+        // 主参考图：优先角色（锁定人物一致性），其次场景，最后道具
+        if (!result.characterImages.isEmpty()) {
             result.primaryImageUrl = result.characterImages.get(0).getImageUrl();
+        } else if (!result.sceneImages.isEmpty()) {
+            result.primaryImageUrl = result.sceneImages.get(0).getImageUrl();
+        } else if (!result.propImages.isEmpty()) {
+            result.primaryImageUrl = result.propImages.get(0).getImageUrl();
         }
 
         result.formattedText = text.toString().trim();
@@ -258,6 +265,37 @@ public class ImageStepHandler extends AbstractStepHandler {
                     .append(img.getImageUrl()).append("\n");
             }
         }
+    }
+
+    /**
+     * 方案C：根据分镜的 character 字段，从 AssetDesign 中提取角色外观描述。
+     * 注入 prompt 锁定人物一致性（发型/瞳色/服饰等），弥补纯参考图 i2i 的不足。
+     */
+    private String buildCharacterDescriptions(Storyboard sb, List<AssetDesign> assetDesigns) {
+        if (assetDesigns == null || assetDesigns.isEmpty() || !StringUtils.hasText(sb.getCharacter())) {
+            return "";
+        }
+        // 构建 assetName → assetDesc 映射（仅人物类型）
+        Map<String, String> descByName = new HashMap<>();
+        for (AssetDesign ad : assetDesigns) {
+            if (ad != null && "人物".equals(ad.getAssetType())
+                    && StringUtils.hasText(ad.getAssetName()) && StringUtils.hasText(ad.getAssetDesc())) {
+                descByName.put(ad.getAssetName(), ad.getAssetDesc());
+            }
+        }
+        if (descByName.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb2 = new StringBuilder();
+        for (String n : sb.getCharacter().split(SEMICOLON_SPLIT)) {
+            String name = n.trim();
+            if (name.isEmpty() || name.equals("无")) continue;
+            String desc = descByName.get(name);
+            if (desc != null) {
+                sb2.append(name).append("：").append(desc).append("\n");
+            }
+        }
+        return sb2.toString().trim();
     }
 
     private StoryboardImage createStoryboardImage(AiInvokeResponse response, StepContext context,

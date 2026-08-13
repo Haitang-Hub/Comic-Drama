@@ -872,8 +872,8 @@ INSERT INTO `prompt_template` (`template_code`, `template_name`, `stage`, `conte
 
 -- 步骤6：分镜绘图
 ('storyboard_image', '分镜绘图模板', 6,
- '画面描述：{{visual_desc}}\n并根据资产图片：{{asset_images}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n根据以上内容生成分镜图片',
- '["visual_desc","asset_images","art_style","visual_style"]', '步骤6：分镜绘图', 1, 1),
+ '画面描述：{{visual_desc}}\n角色外观描述（必须严格保持人物外观一致）：\n{{character_descriptions}}\n参考资产图片：{{asset_images}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n根据以上内容生成分镜图片，角色外观必须与描述完全一致',
+ '["visual_desc","character_descriptions","asset_images","art_style","visual_style"]', '步骤6：分镜绘图', 1, 1),
 
 -- 步骤7：配音合成（暂时不使用）
 ('audio', '配音合成模板', 7,

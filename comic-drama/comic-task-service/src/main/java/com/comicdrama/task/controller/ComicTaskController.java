@@ -61,8 +61,9 @@ public class ComicTaskController {
 
     @PutMapping("/{id}/pause")
     public Result<Void> pause(@PathVariable Long id,
-                              @RequestParam(required = false, defaultValue = "false") boolean rollbackCurrentStep) {
-        taskService.pause(id, rollbackCurrentStep);
+                              @RequestParam(required = false, defaultValue = "false") boolean rollbackCurrentStep,
+                              @RequestParam(required = false, defaultValue = "false") boolean stopAfterCurrentStep) {
+        taskService.pause(id, rollbackCurrentStep, stopAfterCurrentStep);
         return Result.ok();
     }
 
@@ -190,6 +191,42 @@ public class ComicTaskController {
         } catch (Exception e) {
             log.error("单张分镜图重生成失败 taskId={}, imageId={}", id, imageId, e);
             return Result.fail("单张分镜图重生成请求失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 单条场景视频重生成（步骤8）。
+     */
+    @PostMapping("/{id}/regenerate/scene-video/{videoId}")
+    public Result<Void> regenerateSceneVideo(@PathVariable Long id,
+                                             @PathVariable Long videoId,
+                                             @RequestBody(required = false) Map<String, Object> body) {
+        Map<String, Object> overrides = body != null ? body : new HashMap<>();
+        log.info("收到单条场景视频重生成请求 taskId={}, videoId={}, overrides={}", id, videoId, overrides);
+        try {
+            ComicTask task = taskService.getById(id);
+            Map<String, Object> request = new HashMap<>();
+            request.put("taskId", id);
+            request.put("userId", 1L);
+            request.put("overrides", overrides);
+            if (task != null) {
+                Map<String, Object> dtoMap = new HashMap<>();
+                dtoMap.put("title", task.getTitle());
+                dtoMap.put("storyRequirement", task.getStoryRequirement());
+                dtoMap.put("duration", task.getDuration());
+                dtoMap.put("aspectRatio", task.getAspectRatio());
+                dtoMap.put("resolution", task.getResolution());
+                dtoMap.put("voiceEnabled", task.getVoiceEnabled());
+                dtoMap.put("execMode", task.getExecMode());
+                dtoMap.put("artStyle", task.getArtStyle());
+                dtoMap.put("visualStyle", task.getVisualStyle());
+                request.put("taskCreateDTO", dtoMap);
+            }
+            workflowClient.regenerateSceneVideo(request, videoId);
+            return Result.ok();
+        } catch (Exception e) {
+            log.error("单条场景视频重生成失败 taskId={}, videoId={}", id, videoId, e);
+            return Result.fail("单条场景视频重生成请求失败：" + e.getMessage());
         }
     }
 

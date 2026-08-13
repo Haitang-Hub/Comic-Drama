@@ -224,6 +224,40 @@ public class PipelineController {
     }
 
     /**
+     * 单条场景视频重生成（步骤8）。
+     * 异步执行，立即返回。
+     */
+    @PostMapping("/regenerate/scene-video")
+    public Result<Void> regenerateSceneVideo(@RequestBody PipelineExecuteRequest request,
+                                             @RequestParam Long videoId) {
+        if (request.getTaskId() == null) return Result.fail("taskId 不能为空");
+        if (videoId == null) return Result.fail("videoId 不能为空");
+
+        log.info("收到单条场景视频重生成请求 taskId={}, videoId={}, overrides={}",
+                request.getTaskId(), videoId, request.getOverrides());
+
+        taskInfoProvider.registerTask(
+                request.getTaskId(),
+                request.getUserId() != null ? request.getUserId() : 1L,
+                request.getTitle() != null ? request.getTitle() : "Untitled",
+                request.getTaskCreateDTO() != null ? request.getTaskCreateDTO() : new com.comicdrama.common.dto.TaskCreateDTO());
+
+        Long taskId = request.getTaskId();
+        java.util.Map<String, Object> overrides = request.getOverrides();
+        CompletableFuture.runAsync(() -> {
+            try {
+                log.info("异步开始单条场景视频重生成 taskId={}, videoId={}", taskId, videoId);
+                workflowPipelineService.regenerateSceneVideo(taskId, videoId, overrides);
+                log.info("单条场景视频重生成完成 taskId={}, videoId={}", taskId, videoId);
+            } catch (Exception e) {
+                log.error("单条场景视频重生成失败 taskId={}, videoId={}", taskId, videoId, e);
+            }
+        }, asyncExecutor);
+
+        return Result.ok();
+    }
+
+    /**
      * 清理 [fromStep, toStep] 范围内步骤的产物记录（同步执行）。
      * 用于：暂停时回退当前步骤（rollbackCurrentStep=true）、以及其他需要手动清理下游产物的场景。
      */
