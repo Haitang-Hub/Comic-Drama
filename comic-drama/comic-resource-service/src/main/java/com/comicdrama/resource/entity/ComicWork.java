@@ -1,5 +1,6 @@
 package com.comicdrama.resource.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.comicdrama.common.entity.BaseEntity;
 import lombok.Data;
@@ -20,15 +21,26 @@ public class ComicWork extends BaseEntity {
     private String description;
     private String coverUrl;
     private String videoUrl;
+    @TableField(exist = false)
+    private String zipUrl;
+    @TableField(exist = false)
     private Integer segmentCount;
+    @TableField(exist = false)
     private String mergedFrom;
     private Integer duration;
     private String resolution;
+    @TableField(exist = false)
     private String aspectRatio;
+    @TableField(exist = false)
     private Long fileSize;
     private Integer status;
     private Integer isPublic;
     private Integer viewCount;
     private Integer likeCount;
+    @TableField(exist = false)
+    private String shareToken;
+    @TableField(exist = false)
+    private LocalDateTime shareExpire;
+    @TableField(exist = false)
     private LocalDateTime publishTime;
 }

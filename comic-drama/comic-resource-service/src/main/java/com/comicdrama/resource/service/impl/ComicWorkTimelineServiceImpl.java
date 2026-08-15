@@ -32,9 +32,14 @@ public class ComicWorkTimelineServiceImpl extends ServiceImpl<ComicWorkTimelineM
 
     @Override
     public List<ComicWorkTimeline> listByWorkId(Long workId) {
-        return this.list(new LambdaQueryWrapper<ComicWorkTimeline>()
-                .eq(ComicWorkTimeline::getWorkId, workId)
-                .orderByAsc(ComicWorkTimeline::getOrderIndex));
+        try {
+            return this.list(new LambdaQueryWrapper<ComicWorkTimeline>()
+                    .eq(ComicWorkTimeline::getWorkId, workId)
+                    .orderByAsc(ComicWorkTimeline::getOrderIndex));
+        } catch (Exception e) {
+            log.warn("作品时间线查询失败，疑似表未创建，兜底返回空列表 workId={}: {}", workId, e.getMessage());
+            return List.of();
+        }
     }
 
     @Override

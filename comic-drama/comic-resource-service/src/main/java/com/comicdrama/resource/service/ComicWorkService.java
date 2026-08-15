@@ -7,7 +7,7 @@ import com.comicdrama.resource.entity.ComicWork;
 
 public interface ComicWorkService extends IService<ComicWork> {
 
-    ComicWork createWork(Long taskId, String title, String coverUrl, String finalVideoUrl,
+    ComicWork createWork(Long taskId, String title, String coverUrl, String finalVideoUrl, String primaryVideoUrl,
                          String resolution, Integer duration, Long userId);
 
     ComicWork getByTaskId(Long taskId);
@@ -16,5 +16,9 @@ public interface ComicWorkService extends IService<ComicWork> {
 
     ComicWork getById(Long id);
 
-    void delete(Long id);
+    String generateShareToken(Long id, int expireHours);
+
+    ComicWork getByShareToken(String token);
+
+    void incrementViewCount(Long id);
 }

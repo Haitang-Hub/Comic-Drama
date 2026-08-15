@@ -22,7 +22,6 @@ import org.springframework.web.client.RestTemplate;
 import java.io.BufferedOutputStream;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -106,10 +105,15 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
                 videos.size(), taskId);
         reportProgress(context, 5, "正在收集场景视频...");
 
-        // 1. 按 sceneGroupId 排序，过滤无URL的
+        // 1. 按 sceneGroupId + 起始分镜序号（从storyboardIds解析）双层严格排序，同组内按分镜号递增
+        //    SceneVideo.sceneGroupId 可能重复，storyboardIds 格式为 "minSeq,maxSeq"（如 "1,2"）
+        Comparator<SceneVideo> sceneOrder = Comparator
+                .comparing((SceneVideo v) -> v.getSceneGroupId() == null ? 0L : v.getSceneGroupId())
+                .thenComparingLong(v -> parseStartSeq(v.getStoryboardIds()))
+                .thenComparing(v -> v.getId() == null ? 0L : v.getId());
         List<SceneVideo> sortedVideos = videos.stream()
                 .filter(v -> StringUtils.hasText(v.getVideoUrl()))
-                .sorted(Comparator.comparing(v -> v.getSceneGroupId() == null ? 0L : v.getSceneGroupId()))
+                .sorted(sceneOrder)
                 .collect(Collectors.toList());
         if (sortedVideos.isEmpty()) {
             throw new BizException("没有有效的场景视频可供合并");
@@ -153,7 +157,12 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
             // 9. 调用 resource-service 创建/更新 ComicWork
             reportProgress(context, 90, "正在归档作品记录...");
             Long workId = upsertComicWork(context, coverUrl, zipSignedUrl,
-                    manifest.getSegmentCount(), manifest.getTotalDuration());
+                    manifest.getSegmentCount(), manifest.getTotalDuration(), sortedVideos);
+
+            // 9.5 写入作品时间线条目（供详情页播放）
+            if (workId != null) {
+                writeTimeline(workId, sortedVideos);
+            }
 
             // 10. 构建 FinalWorkInfo 存入 context
             FinalWorkInfo finalInfo = FinalWorkInfo.builder()
@@ -277,12 +286,14 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
 
     @SuppressWarnings("unchecked")
     private Long upsertComicWork(StepContext context, String coverUrl, String zipUrl,
-                                  int segmentCount, int duration) {
+                                  int segmentCount, int duration, List<SceneVideo> sortedVideos) {
         Long taskId = context.getTaskId();
         Long userId = context.getUserId();
         String title = context.getRequestDTO() != null && StringUtils.hasText(context.getRequestDTO().getTitle())
                 ? context.getRequestDTO().getTitle() : "Untitled";
         String resolution = context.getRequestDTO() != null ? context.getRequestDTO().getResolution() : null;
+        String primaryVideoUrl = !sortedVideos.isEmpty() ? sortedVideos.get(0).getVideoUrl() : zipUrl;
+        Long fileSize = (context.getArtifact(StepEnum.VIDEO_MERGE) instanceof FinalWorkInfo fwi) ? fwi.getZipFileSize() : null;
 
         // 1. 查是否已有 ComicWork
         try {
@@ -295,7 +306,8 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
                 // 已有 → PUT 更新
                 Map<String, Object> body = new HashMap<>(existing);
                 body.put("coverUrl", coverUrl);
-                body.put("videoUrl", zipUrl);
+                // 存首段可播放视频 URL（mp4），ZIP 包地址通过 manifest 下载
+                body.put("videoUrl", primaryVideoUrl);
                 body.put("duration", duration);
                 body.put("segmentCount", segmentCount);
                 if (resolution != null) body.put("resolution", resolution);
@@ -308,22 +320,31 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
             log.warn("[VIDEO_MERGE] 查询已有 ComicWork 失败（可能不存在），继续创建: {}", e.getMessage());
         }
 
-        // 2. 不存在 → POST 创建
+        // 2. 不存在 → POST 创建（使用JSON请求体，避免URL编码导致中文标题存储错误）
         try {
-            String createUrl = resourceServiceUrl + "/api/work/create?taskId=" + taskId
-                    + "&title=" + URLEncoder.encode(title, StandardCharsets.UTF_8)
-                    + "&coverUrl=" + URLEncoder.encode(coverUrl != null ? coverUrl : "", StandardCharsets.UTF_8)
-                    + "&finalVideoUrl=" + URLEncoder.encode(zipUrl, StandardCharsets.UTF_8)
-                    + "&resolution=" + (resolution != null ? resolution : "")
-                    + "&duration=" + duration
-                    + "&userId=" + (userId != null ? userId : 1L);
+            Map<String, Object> createBody = new HashMap<>();
+            createBody.put("taskId", taskId);
+            createBody.put("title", title);
+            createBody.put("coverUrl", coverUrl != null ? coverUrl : "");
+            createBody.put("finalVideoUrl", zipUrl);
+            createBody.put("primaryVideoUrl", primaryVideoUrl);
+            createBody.put("resolution", resolution != null ? resolution : "");
+            createBody.put("duration", duration);
+            createBody.put("userId", userId != null ? userId : 1L);
+
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+            org.springframework.http.HttpEntity<Map<String, Object>> requestEntity =
+                    new org.springframework.http.HttpEntity<>(createBody, headers);
+
             ResponseEntity<Result<Map<String, Object>>> createResp = restTemplate.exchange(
-                    createUrl, org.springframework.http.HttpMethod.POST, null,
+                    resourceServiceUrl + "/api/work/create",
+                    org.springframework.http.HttpMethod.POST, requestEntity,
                     new ParameterizedTypeReference<>() {});
             Map<String, Object> created = extractData(createResp.getBody());
             if (created != null && created.get("id") != null) {
-                log.info("[VIDEO_MERGE] ComicWork 创建成功 workId={}, taskId={}",
-                        created.get("id"), taskId);
+                log.info("[VIDEO_MERGE] ComicWork 创建成功 workId={}, taskId={}, title={}",
+                        created.get("id"), taskId, title);
                 return ((Number) created.get("id")).longValue();
             }
         } catch (Exception e) {
@@ -339,6 +360,91 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
             return (Map<String, Object>) result.getData();
         }
         return null;
+    }
+
+    // ==================== 写入作品时间线 ====================
+
+    private void writeTimeline(Long workId, List<SceneVideo> sortedVideos) {
+        try {
+            // 先清理旧的时间线条目（重新归档时）
+            String listUrl = resourceServiceUrl + "/api/work/timeline/" + workId;
+            try {
+                ResponseEntity<Result<List<Map<String, Object>>>> listResp = restTemplate.exchange(
+                        listUrl, org.springframework.http.HttpMethod.GET, null,
+                        new ParameterizedTypeReference<>() {});
+                List<Map<String, Object>> oldList = extractList(listResp.getBody());
+                if (oldList != null && !oldList.isEmpty()) {
+                    for (Map<String, Object> old : oldList) {
+                        Object id = old.get("id");
+                        if (id != null) {
+                            try {
+                                restTemplate.delete(resourceServiceUrl + "/api/work/timeline/" + id);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[VIDEO_MERGE] 清理旧时间线条目失败: {}", e.getMessage());
+            }
+
+            int orderIndex = 0;
+            for (SceneVideo sv : sortedVideos) {
+                try {
+                    Map<String, Object> payload = new HashMap<>();
+                    payload.put("workId", workId);
+                    payload.put("sceneGroupId", sv.getSceneGroupId());
+                    payload.put("videoUrl", sv.getVideoUrl());
+                    int orderIndex2 = orderIndex++;
+                    payload.put("orderIndex", orderIndex2);
+                    Integer durationSeconds = null;
+                    if (sv.getDuration() != null && sv.getDuration().compareTo(java.math.BigDecimal.ZERO) > 0) {
+                        durationSeconds = sv.getDuration().setScale(0, java.math.RoundingMode.CEILING).intValue();
+                    }
+                    payload.put("duration", durationSeconds);
+
+                    org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+                    headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+                    org.springframework.http.HttpEntity<Map<String, Object>> entity =
+                            new org.springframework.http.HttpEntity<>(payload, headers);
+
+                    restTemplate.exchange(resourceServiceUrl + "/api/work/timeline",
+                            org.springframework.http.HttpMethod.POST, entity,
+                            new ParameterizedTypeReference<Result<Object>>() {});
+                } catch (Exception e) {
+                    log.warn("[VIDEO_MERGE] 写入时间线条目失败, workId={}, sceneGroupId={}: {}",
+                            workId, sv.getSceneGroupId(), e.getMessage());
+                }
+            }
+            log.info("[VIDEO_MERGE] 作品时间线写入完成 workId={}, timelineCount={}", workId, sortedVideos.size());
+        } catch (Exception e) {
+            log.error("[VIDEO_MERGE] 写入作品时间线异常: {}", e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> List<T> extractList(Result<?> result) {
+        if (result != null && result.getCode() == 200 && result.getData() instanceof List) {
+            return (List<T>) result.getData();
+        }
+        return null;
+    }
+
+    // ==================== 排序辅助 ====================
+
+    /**
+     * 解析 storyboardIds 字段的起始分镜序号。
+     * 格式约定为 "minSeq,maxSeq"（如 "1,2"）；若为空或解析失败返回 Long.MAX_VALUE，
+     * 保证缺值的条目排在同组末尾，不会乱插到前面。
+     */
+    private static long parseStartSeq(String storyboardIds) {
+        if (!StringUtils.hasText(storyboardIds)) return Long.MAX_VALUE;
+        try {
+            int comma = storyboardIds.indexOf(',');
+            String first = (comma > 0) ? storyboardIds.substring(0, comma) : storyboardIds;
+            return Long.parseLong(first.trim());
+        } catch (Exception e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     // ==================== 清理临时文件 ====================

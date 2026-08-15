@@ -6,64 +6,117 @@
           <el-icon><ArrowLeft /></el-icon>
           返回
         </button>
-        <h2>{{ work.title || '未命名作品' }}</h2>
-        <el-tag :type="work.status === 1 ? 'success' : 'info'" effect="light" round>
-          {{ work.status === 1 ? '已发布' : '草稿' }}
+        <h2>{{ decodeTitle(work.title) || '未命名作品' }}</h2>
+        <el-tag type="success" effect="light" round>
+          已完成
         </el-tag>
+        <div class="header-actions">
+          <button class="sketch-btn sketch-btn--ghost btn-sm" @click="openShare">
+            <el-icon><Share /></el-icon>
+            分享
+          </button>
+          <button
+            v-if="canViewTask"
+            class="sketch-btn sketch-btn--ghost btn-sm"
+            @click="goToTask"
+          >
+            <el-icon><Link /></el-icon>
+            查看任务
+          </button>
+          <button class="sketch-btn sketch-btn--ghost btn-sm" @click="openEditWork">
+            <el-icon><Edit /></el-icon>
+            编辑作品
+          </button>
+        </div>
       </div>
 
-      <el-alert
-        v-if="work.taskId"
-        type="info"
-        :closable="false"
-        show-icon
-        class="task-ref-alert"
-      >
-        <template #title>
-          <span>此作品由任务生成，按任务反查：</span>
-          <el-tag type="primary" effect="dark" round style="margin-left: 6px; cursor: pointer" @click="goToTask">
-            #{{ work.taskId }}
-          </el-tag>
-        </template>
-      </el-alert>
-
       <div class="player-section sketch-card">
-        <div class="player-wrapper" v-if="work.videoUrl">
-          <video
-            ref="videoRef"
-            :src="work.videoUrl"
-            :poster="work.coverUrl"
-            controls
-            class="video-player"
-          >
-            您的浏览器不支持视频播放
-          </video>
-        </div>
-        <div v-else class="player-placeholder">
-          <el-icon :size="64"><VideoPlay /></el-icon>
-          <p>视频资源未就绪</p>
+        <div class="player-wrapper">
+          <div v-if="playableUrl || isZipOnly" class="player-container">
+            <video
+              v-if="playableUrl"
+              ref="videoRef"
+              :src="currentVideoSrc"
+              :poster="work.coverUrl"
+              controls
+              class="video-player"
+              @ended="handleVideoEnded"
+              @loadedmetadata="handleVideoMeta"
+            >
+              您的浏览器不支持视频播放
+            </video>
+            <div v-else class="zip-placeholder">
+              <el-icon :size="80" class="zip-icon"><FolderOpened /></el-icon>
+              <h3>作品已打包为 ZIP 成片</h3>
+              <p class="zip-hint">
+                因作品包含多段分镜视频，无法直接在网页播放。<br />
+                请点击下方按钮下载完整成片包，或使用时间线分段播放。
+              </p>
+              <div class="zip-buttons">
+                <button v-if="work.zipUrl" class="sketch-btn sketch-btn--primary" @click="handleDownloadZip">
+                  <el-icon><Download /></el-icon>
+                  下载成片 ZIP（{{ formatFileSize(work.fileSize) }}）
+                </button>
+                <button v-if="timeline.length > 0" class="sketch-btn sketch-btn--ghost" @click="seekToTimeline(0)">
+                  <el-icon><VideoPlay /></el-icon>
+                  从第 1 段开始播放
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="player-placeholder">
+            <el-icon :size="64"><VideoPlay /></el-icon>
+            <p>视频资源未就绪</p>
+            <p class="placeholder-hint">请确认任务已完成视频合并步骤</p>
+          </div>
+
+          <div v-if="timeline.length > 1" class="segment-bar">
+            <el-icon class="seg-nav" :class="{ disabled: currentPlayIndex <= 0 }" @click="playPrev"><CaretLeft /></el-icon>
+            <span class="seg-info">
+              第 {{ currentPlayIndex + 1 }} / {{ timeline.length }} 段
+              <span v-if="currentSegment"> · 时长 {{ formatDuration(currentSegment.duration || 0) }}</span>
+            </span>
+            <el-icon class="seg-nav" :class="{ disabled: currentPlayIndex >= timeline.length - 1 }" @click="playNext"><CaretRight /></el-icon>
+            <el-switch
+              v-model="autoPlayNext"
+              inline-prompt
+              active-text="自动连播"
+              inactive-text="单段播放"
+              style="margin-left: 12px"
+            />
+          </div>
         </div>
 
         <div class="work-meta-bar">
           <div class="meta-item">
-            <span class="meta-label">时长</span>
+            <span class="meta-label">总时长</span>
             <span class="meta-value">{{ formatDuration(work.duration) }}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">分辨率</span>
-            <span class="meta-value">{{ work.resolution }}</span>
+            <span class="meta-value">{{ work.resolution || '-' }}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">画幅</span>
-            <span class="meta-value">{{ work.aspectRatio }}</span>
+            <span class="meta-value">{{ work.aspectRatio || '-' }}</span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">大小</span>
+            <span class="meta-label">文件大小</span>
             <span class="meta-value">{{ formatFileSize(work.fileSize) }}</span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">播放</span>
+            <span class="meta-label">浏览</span>
             <span class="meta-value">{{ work.viewCount || 0 }} 次</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">分镜段数</span>
+            <span class="meta-value">{{ effectiveSegmentCount }} 段</span>
+          </div>
+          <div class="meta-item meta-actions">
+            <button v-if="work.zipUrl" class="download-btn" @click="handleDownloadZip" title="下载完整成片包">
+              <el-icon><Download /></el-icon>
+              下载成片
+            </button>
           </div>
         </div>
       </div>
@@ -72,15 +125,7 @@
         <div class="section-header">
           <h3>分镜时间线</h3>
           <div class="section-actions">
-            <span class="section-hint">共 {{ timeline.length }} 个分镜</span>
-            <button class="sketch-btn sketch-btn--ghost btn-sm" :disabled="timeline.length < 2" @click="handleReorderTimeline">
-              <el-icon><Sort /></el-icon>
-              一键重排
-            </button>
-            <button class="sketch-btn btn-sm" @click="openCreateTimeline">
-              <el-icon><Plus /></el-icon>
-              新增时间线条目
-            </button>
+            <span class="section-hint">共 {{ timeline.length }} 个分镜 · 点击任意分镜跳转播放</span>
           </div>
         </div>
         <div class="timeline-track">
@@ -88,56 +133,20 @@
             v-for="(item, index) in timeline"
             :key="item.id"
             class="timeline-item"
-            :class="{ active: activeTimeline === index }"
+            :class="{ active: currentPlayIndex === index }"
           >
             <div class="timeline-thumb" @click="seekToTimeline(index)">
               <div class="thumb-index">{{ index + 1 }}</div>
-              <span class="thumb-duration">{{ formatDuration(item.duration) }}</span>
-            </div>
-            <div class="timeline-item-actions">
-              <el-button link type="primary" size="small" @click="openEditTimeline(item)">编辑</el-button>
-              <el-button link type="danger" size="small" @click="handleDeleteTimeline(item)">删除</el-button>
+              <span class="thumb-duration">{{ formatDuration(item.duration || 0) }}</span>
+              <div v-if="currentPlayIndex === index" class="playing-indicator">
+                <span></span><span></span><span></span>
+              </div>
             </div>
           </div>
           <div v-if="timeline.length === 0" class="empty-timeline">
-            <p>暂无时间线条目，点击「新增时间线条目」添加</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="scenes-section sketch-card">
-        <div class="section-header">
-          <h3>场景列表</h3>
-        </div>
-        <div class="scene-list">
-          <div
-            v-for="(item, index) in timeline"
-            :key="'scene-' + item.id"
-            class="scene-item"
-            :class="{ active: activeTimeline === index }"
-          >
-            <div class="scene-index" @click="seekToTimeline(index)">{{ index + 1 }}</div>
-            <div class="scene-info" @click="seekToTimeline(index)">
-              <div class="scene-title">场景 {{ index + 1 }}</div>
-              <div class="scene-meta">
-                <span>时长: {{ formatDuration(item.duration) }}</span>
-                <span v-if="item.sceneGroupId" class="meta-sep">|</span>
-                <span v-if="item.sceneGroupId">场景组ID: {{ item.sceneGroupId }}</span>
-                <span v-if="item.storyboardId" class="meta-sep">|</span>
-                <span v-if="item.storyboardId">分镜ID: {{ item.storyboardId }}</span>
-              </div>
-              <div v-if="item.videoUrl" class="scene-video-url" :title="item.videoUrl">
-                视频: {{ truncateUrl(item.videoUrl) }}
-              </div>
-            </div>
-            <div class="scene-actions">
-              <el-button link type="primary" size="small" @click="openEditTimeline(item)">编辑</el-button>
-              <el-button link type="danger" size="small" @click="handleDeleteTimeline(item)">删除</el-button>
-              <el-icon class="scene-play" @click="seekToTimeline(index)"><VideoPlay /></el-icon>
-            </div>
-          </div>
-          <div v-if="timeline.length === 0" class="empty-scenes">
-            <p>暂无分镜数据</p>
+            <el-icon :size="36" class="empty-icon"><Film /></el-icon>
+            <p>暂无分镜时间线</p>
+            <p class="empty-hint">任务重新执行视频合并步骤后，会自动写入分镜条目</p>
           </div>
         </div>
       </div>
@@ -148,66 +157,222 @@
         </div>
         <p class="description-text">{{ work.description }}</p>
       </div>
+
+      <div class="actions-section">
+        <button class="sketch-btn sketch-btn--ghost" @click="router.back()">
+          <el-icon><ArrowLeft /></el-icon>
+          返回列表
+        </button>
+        <button v-if="work.zipUrl" class="sketch-btn sketch-btn--primary" @click="handleDownloadZip">
+          <el-icon><Download /></el-icon>
+          下载成片包
+        </button>
+      </div>
     </div>
 
+    <!-- 编辑作品对话框 -->
     <el-dialog
-      v-model="timelineDialogVisible"
-      :title="editingTimeline ? '编辑时间线条目' : '新增时间线条目'"
+      v-model="editWorkDialogVisible"
+      title="编辑作品信息"
       width="560px"
       :close-on-click-modal="false"
     >
-      <el-form ref="timelineFormRef" :model="timelineForm" :rules="timelineFormRules" label-width="120px">
-        <el-form-item label="场景组ID">
-          <el-input-number v-model="timelineForm.sceneGroupId" :min="0" :step="1" controls-position="right" style="width: 100%" />
+      <el-form ref="editWorkFormRef" :model="editWorkForm" :rules="editWorkFormRules" label-width="100px">
+        <el-form-item label="作品标题" prop="title">
+          <el-input v-model="editWorkForm.title" placeholder="请输入标题" maxlength="100" show-word-limit />
         </el-form-item>
-        <el-form-item label="分镜ID">
-          <el-input-number v-model="timelineForm.storyboardId" :min="0" :step="1" controls-position="right" style="width: 100%" />
+        <el-form-item label="作品描述">
+          <el-input v-model="editWorkForm.description" type="textarea" :rows="3" placeholder="选填" />
         </el-form-item>
-        <el-form-item label="视频URL" prop="videoUrl">
-          <el-input v-model="timelineForm.videoUrl" placeholder="视频文件访问地址" />
+
+        <el-form-item label="作品封面">
+          <div class="cover-selector">
+            <div v-if="editWorkForm.coverUrl" class="cover-preview">
+              <img :src="editWorkForm.coverUrl" class="preview-img" />
+              <button class="remove-cover" @click="editWorkForm.coverUrl = ''">
+                <el-icon><Close /></el-icon>
+              </button>
+            </div>
+            <div v-else class="cover-preview-placeholder">
+              <el-icon :size="36"><Picture /></el-icon>
+              <span>选择封面</span>
+            </div>
+
+            <el-tabs v-model="coverTab" class="cover-tabs">
+              <el-tab-pane label="上传图片" name="upload">
+                <el-upload
+                  :auto-upload="true"
+                  :show-file-list="false"
+                  :before-upload="beforeCoverUpload"
+                  :http-request="handleCoverUpload"
+                  accept="image/*"
+                  class="cover-uploader"
+                >
+                  <div class="uploader-btn">
+                    <el-icon :size="24"><UploadFilled /></el-icon>
+                    <span>点击上传图片</span>
+                  </div>
+                </el-upload>
+              </el-tab-pane>
+
+              <el-tab-pane label="从资产选择" name="asset">
+                <div v-if="assetImages.length === 0" class="no-assets">
+                  <el-icon :size="32"><Picture /></el-icon>
+                  <span>暂无资产图片</span>
+                </div>
+                <div v-else class="asset-grid">
+                  <div
+                    v-for="img in assetImages"
+                    :key="img.id"
+                    class="asset-item"
+                    :class="{ active: editWorkForm.coverUrl === img.imageUrl }"
+                    @click="editWorkForm.coverUrl = img.imageUrl"
+                  >
+                    <img :src="img.thumbnailUrl || img.imageUrl" :alt="img.assetName || '资产'" />
+                    <span class="asset-name">{{ img.assetName || '资产' }}</span>
+                  </div>
+                </div>
+              </el-tab-pane>
+            </el-tabs>
+          </div>
         </el-form-item>
-        <el-form-item label="排序序号" prop="orderIndex">
-          <el-input-number v-model="timelineForm.orderIndex" :min="0" :step="1" controls-position="right" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="时长(秒)">
-          <el-input-number v-model="timelineForm.duration" :min="0" :step="1" :precision="0" controls-position="right" style="width: 100%" />
+
+        <el-form-item label="是否公开">
+          <el-radio-group v-model="editWorkForm.isPublic">
+            <el-radio :value="1">公开</el-radio>
+            <el-radio :value="0">不公开</el-radio>
+          </el-radio-group>
         </el-form-item>
       </el-form>
       <template #footer>
-        <button class="sketch-btn sketch-btn--ghost" @click="timelineDialogVisible = false">取消</button>
-        <button class="sketch-btn" :disabled="timelineSubmitting" @click="handleSubmitTimeline">
-          {{ timelineSubmitting ? '保存中...' : '确认' }}
+        <button class="sketch-btn sketch-btn--ghost" @click="editWorkDialogVisible = false">取消</button>
+        <button class="sketch-btn" :disabled="editWorkSubmitting" @click="handleSubmitEditWork">
+          {{ editWorkSubmitting ? '保存中...' : '保存' }}
         </button>
       </template>
+    </el-dialog>
+
+    <!-- 分享弹窗 -->
+    <el-dialog
+      v-model="shareVisible"
+      title="分享作品"
+      width="460px"
+      :close-on-click-modal="true"
+    >
+      <div v-if="work" class="share-content">
+        <div class="share-work-info">
+          <img v-if="work.coverUrl" :src="work.coverUrl" class="share-cover" />
+          <div class="share-work-meta">
+            <div class="share-title">{{ decodeTitle(work.title) }}</div>
+            <div class="share-desc">分享给其他用户查看完成的视频</div>
+          </div>
+        </div>
+        <div v-if="shareUrl" class="share-link-section">
+          <div class="share-label">分享链接</div>
+          <div class="share-link-box">
+            <el-input v-model="shareUrl" readonly @focus="($event.target as HTMLInputElement).select()" />
+          </div>
+          <div class="share-actions">
+            <button class="sketch-btn sketch-btn--primary" @click="copyShareUrl">
+              <el-icon><CopyDocument /></el-icon>
+              复制链接
+            </button>
+          </div>
+          <div class="share-expire">链接有效期：72 小时</div>
+        </div>
+        <div v-else class="share-generating">
+          <el-icon class="spin-icon"><Loading /></el-icon>
+          <span>正在生成分享链接...</span>
+        </div>
+      </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed, nextTick, reactive } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { ArrowLeft, VideoPlay, Plus, Sort } from '@element-plus/icons-vue'
+import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import {
+  ArrowLeft, VideoPlay, Edit, Share, Link, Download, FolderOpened,
+  CaretLeft, CaretRight, Film, Close, Picture, UploadFilled, Loading,
+  CopyDocument
+} from '@element-plus/icons-vue'
 import {
   getWork,
   getWorkTimeline,
-  createWorkTimeline,
-  updateWorkTimeline,
-  deleteWorkTimeline,
-  reorderWorkTimeline,
+  updateWork,
+  getAssetImagesByTask,
+  uploadFile,
+  generateWorkShareToken,
   type WorkItem,
-  type WorkTimelineItem
+  type WorkTimelineItem,
+  type AssetImageItem
 } from '@/api/work'
+import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 
 const loading = ref(false)
 const workId = computed(() => Number(route.params.id))
 const work = ref<WorkItem | null>(null)
 const timeline = ref<WorkTimelineItem[]>([])
-const activeTimeline = ref(-1)
+const currentPlayIndex = ref(0)
+const autoPlayNext = ref(true)
 const videoRef = ref<HTMLVideoElement>()
+
+const canViewTask = computed(() => {
+  if (!work.value?.taskId) return false
+  const currentUserId = userStore.userInfo?.id
+  if (!currentUserId) return false
+  return work.value.userId === currentUserId || work.value.isPublic === 1
+})
+
+const effectiveSegmentCount = computed(() => {
+  if (work.value?.segmentCount && work.value.segmentCount > 0) return work.value.segmentCount
+  if (timeline.value.length > 0) return timeline.value.length
+  return 0
+})
+
+const currentSegment = computed(() => timeline.value[currentPlayIndex.value])
+
+const isZipOnly = computed(() => {
+  const video = work.value?.videoUrl
+  if (video && /\.(zip|ZIP)$/.test(video.split('?')[0])) return true
+  if (!video && work.value?.zipUrl) return true
+  return false
+})
+
+const playableUrl = computed(() => {
+  if (timeline.value[currentPlayIndex.value]?.videoUrl) {
+    return timeline.value[currentPlayIndex.value].videoUrl
+  }
+  const video = work.value?.videoUrl
+  if (video && !/\.(zip|ZIP)$/.test(video.split('?')[0])) {
+    return video
+  }
+  return ''
+})
+
+const currentVideoSrc = ref('')
+watch(playableUrl, (url) => {
+  currentVideoSrc.value = url
+}, { immediate: true })
+
+function decodeTitle(title?: string): string {
+  if (!title) return ''
+  try {
+    const decoded = decodeURIComponent(title)
+    if (decoded !== title && !/[\u4e00-\u9fa5]/.test(title)) {
+      return decoded
+    }
+    return title
+  } catch {
+    return title
+  }
+}
 
 function formatDuration(seconds?: number) {
   if (!seconds) return '0:00'
@@ -226,149 +391,194 @@ function formatFileSize(bytes?: number) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
-function truncateUrl(url: string) {
-  if (!url) return '-'
-  if (url.length <= 50) return url
-  return url.slice(0, 24) + '...' + url.slice(-24)
-}
-
 function goToTask() {
   if (work.value?.taskId) {
     router.push(`/task/${work.value.taskId}`)
   }
 }
 
+function handleDownloadZip() {
+  const url = work.value?.zipUrl
+  if (!url) {
+    ElMessage.warning('暂无完整成片包可供下载')
+    return
+  }
+  const a = document.createElement('a')
+  a.href = url
+  a.target = '_blank'
+  a.rel = 'noopener noreferrer'
+  const title = decodeTitle(work.value?.title) || '作品'
+  a.download = `${title}.zip`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  ElMessage.success('已开始下载成片包')
+}
+
+function handleVideoEnded() {
+  if (autoPlayNext.value && currentPlayIndex.value < timeline.value.length - 1) {
+    playNext()
+  }
+}
+
+function handleVideoMeta() {
+  // 预留
+}
+
+function playPrev() {
+  if (currentPlayIndex.value > 0) seekToTimeline(currentPlayIndex.value - 1)
+}
+function playNext() {
+  if (currentPlayIndex.value < timeline.value.length - 1) seekToTimeline(currentPlayIndex.value + 1)
+}
+
 async function loadWork() {
   loading.value = true
   try {
     const [w, t] = await Promise.all([
-      getWork(workId.value),
-      getWorkTimeline(workId.value)
+      getWork(workId.value).catch(() => null),
+      getWorkTimeline(workId.value).catch(() => [] as WorkTimelineItem[])
     ])
-    work.value = w
-    timeline.value = Array.isArray(t) ? [...t].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)) : []
+    if (w) {
+      work.value = { ...w, title: decodeTitle(w.title) }
+      timeline.value = Array.isArray(t) ? [...t].sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)) : []
+      currentPlayIndex.value = 0
+    } else {
+      work.value = null
+      timeline.value = []
+    }
   } catch (e) {
     console.error('Failed to load work', e)
+    work.value = null
   } finally {
     loading.value = false
   }
 }
 
 function seekToTimeline(index: number) {
-  if (videoRef.value && timeline.value[index]) {
-    activeTimeline.value = index
-    videoRef.value.play()
+  const item = timeline.value[index]
+  if (!item?.videoUrl) {
+    ElMessage.info('该段暂无视频地址')
+  }
+  currentPlayIndex.value = index
+  currentVideoSrc.value = timeline.value[index]?.videoUrl || work.value?.videoUrl || ''
+  if (videoRef.value) {
+    videoRef.value.load()
+    videoRef.value.play().catch(() => { /* 自动播放被浏览器拦截时忽略 */ })
   }
 }
 
-// ===== 时间线条目 =====
-const timelineDialogVisible = ref(false)
-const timelineSubmitting = ref(false)
-const editingTimeline = ref<WorkTimelineItem | null>(null)
-const timelineFormRef = ref<FormInstance>()
-const timelineForm = reactive({
+// ===== 编辑作品 =====
+const editWorkDialogVisible = ref(false)
+const editWorkSubmitting = ref(false)
+const editWorkFormRef = ref<FormInstance>()
+const coverTab = ref<'upload' | 'asset'>('upload')
+const assetImages = ref<AssetImageItem[]>([])
+const editWorkForm = reactive({
   id: 0,
-  sceneGroupId: 0,
-  storyboardId: 0,
-  videoUrl: '',
-  orderIndex: 0,
-  duration: 0
+  title: '',
+  description: '',
+  coverUrl: '',
+  isPublic: 0
 })
-const timelineFormRules: FormRules = {
-  videoUrl: [{ required: true, message: '请输入视频URL', trigger: 'blur' }],
-  orderIndex: [{ required: true, message: '请输入排序序号', trigger: 'blur' }]
+const editWorkFormRules: FormRules = {
+  title: [{ required: true, message: '请输入作品标题', trigger: 'blur' }]
 }
 
-function openCreateTimeline() {
-  editingTimeline.value = null
-  const maxOrder = timeline.value.length > 0
-    ? Math.max(...timeline.value.map(t => t.orderIndex ?? 0))
-    : -1
-  Object.assign(timelineForm, {
-    id: 0,
-    sceneGroupId: 0,
-    storyboardId: 0,
-    videoUrl: '',
-    orderIndex: maxOrder + 1,
-    duration: 0
-  })
-  timelineDialogVisible.value = true
-}
+async function openEditWork() {
+  if (!work.value) return
+  editWorkForm.id = work.value.id
+  editWorkForm.title = decodeTitle(work.value.title)
+  editWorkForm.description = work.value.description || ''
+  editWorkForm.coverUrl = work.value.coverUrl || ''
+  editWorkForm.isPublic = work.value.isPublic ?? 0
+  coverTab.value = 'upload'
+  assetImages.value = []
+  editWorkDialogVisible.value = true
 
-function openEditTimeline(item: WorkTimelineItem) {
-  editingTimeline.value = item
-  Object.assign(timelineForm, {
-    id: item.id,
-    sceneGroupId: item.sceneGroupId ?? 0,
-    storyboardId: item.storyboardId ?? 0,
-    videoUrl: item.videoUrl || '',
-    orderIndex: item.orderIndex ?? 0,
-    duration: item.duration ?? 0
-  })
-  timelineDialogVisible.value = true
-}
-
-async function handleSubmitTimeline() {
-  if (!timelineFormRef.value) return
-  await timelineFormRef.value.validate(async (valid) => {
-    if (!valid) return
-    timelineSubmitting.value = true
+  if (work.value.taskId) {
     try {
-      const payload: any = {
-        workId: workId.value,
-        videoUrl: timelineForm.videoUrl,
-        orderIndex: timelineForm.orderIndex
-      }
-      if (timelineForm.sceneGroupId > 0) payload.sceneGroupId = timelineForm.sceneGroupId
-      if (timelineForm.storyboardId > 0) payload.storyboardId = timelineForm.storyboardId
-      if (timelineForm.duration > 0) payload.duration = timelineForm.duration
+      const images = await getAssetImagesByTask(work.value.taskId)
+      assetImages.value = Array.isArray(images) ? images : []
+    } catch (_) { /* 静默失败 */ }
+  }
+}
 
-      if (editingTimeline.value) {
-        await updateWorkTimeline(editingTimeline.value.id, payload)
-        ElMessage.success('条目已更新')
-      } else {
-        await createWorkTimeline(payload)
-        ElMessage.success('条目已新增')
-      }
-      timelineDialogVisible.value = false
+function beforeCoverUpload(): boolean {
+  return true
+}
+
+async function handleCoverUpload(options: any) {
+  const file: File = options.file
+  if (!file) return
+  try {
+    const res = await uploadFile(file, work.value?.taskId, 'work_cover')
+    if (res?.fileUrl) {
+      editWorkForm.coverUrl = res.fileUrl
+      ElMessage.success('封面上传成功')
+    } else {
+      ElMessage.error('上传失败')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '上传失败')
+  }
+}
+
+async function handleSubmitEditWork() {
+  if (!editWorkFormRef.value) return
+  await editWorkFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    editWorkSubmitting.value = true
+    try {
+      await updateWork({
+        id: editWorkForm.id,
+        title: editWorkForm.title,
+        description: editWorkForm.description || undefined,
+        coverUrl: editWorkForm.coverUrl || undefined,
+        isPublic: editWorkForm.isPublic
+      })
+      ElMessage.success('保存成功')
+      editWorkDialogVisible.value = false
       await loadWork()
     } catch (e: any) {
       ElMessage.error(e?.message || '保存失败')
     } finally {
-      timelineSubmitting.value = false
+      editWorkSubmitting.value = false
     }
   })
 }
 
-async function handleDeleteTimeline(item: WorkTimelineItem) {
+// ===== 分享 =====
+const shareVisible = ref(false)
+const shareUrl = ref('')
+
+async function openShare() {
+  shareUrl.value = ''
+  shareVisible.value = true
+  if (!work.value) return
   try {
-    await ElMessageBox.confirm(
-      `确定删除时间线条目（序号 ${item.orderIndex}）吗？`,
-      '删除条目',
-      { type: 'error', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' }
-    )
-    await deleteWorkTimeline(item.id)
-    ElMessage.success('已删除')
-    await loadWork()
-  } catch (_) { /* 用户取消 */ }
+    const token = await generateWorkShareToken(work.value.id, 72)
+    const origin = window.location.origin
+    shareUrl.value = `${origin}/work/share/${token}`
+  } catch (e: any) {
+    ElMessage.error(e?.message || '生成分享链接失败')
+    shareVisible.value = false
+  }
 }
 
-async function handleReorderTimeline() {
-  if (timeline.value.length < 2) return
-  try {
-    await ElMessageBox.confirm(
-      `将按当前顺序（1~${timeline.value.length}）重置所有条目的 orderIndex，是否继续？`,
-      '一键重排',
-      { type: 'warning', confirmButtonText: '确认重排' }
-    )
-    const payload = timeline.value.map((t, idx) => ({
-      id: t.id,
-      orderIndex: idx
-    }))
-    await reorderWorkTimeline(payload)
-    ElMessage.success('重排完成')
-    await loadWork()
-  } catch (_) { /* 用户取消或请求失败 */ }
+function copyShareUrl() {
+  if (!shareUrl.value) return
+  navigator.clipboard.writeText(shareUrl.value).then(() => {
+    ElMessage.success('分享链接已复制到剪贴板')
+  }).catch(() => {
+    const ta = document.createElement('textarea')
+    ta.value = shareUrl.value
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+    ElMessage.success('分享链接已复制')
+  })
 }
 
 onMounted(loadWork)
@@ -415,9 +625,15 @@ onMounted(loadWork)
   font-weight: 800;
   color: var(--cd-text);
 }
-
-.task-ref-alert {
-  margin: 0;
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
 }
 
 .player-section {
@@ -427,30 +643,100 @@ onMounted(loadWork)
 .player-wrapper {
   background-color: #000;
   width: 100%;
-  max-height: 500px;
+}
+.player-container {
+  width: 100%;
+  position: relative;
+  max-height: 540px;
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #0a0a0a 0%, #161616 100%);
 }
 .video-player {
   width: 100%;
-  max-height: 500px;
+  max-height: 540px;
   display: block;
+  background: #000;
 }
+.zip-placeholder {
+  text-align: center;
+  padding: 48px 24px;
+  color: #fff;
+  width: 100%;
+}
+.zip-icon {
+  color: var(--cd-primary);
+  margin-bottom: 12px;
+}
+.zip-placeholder h3 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 800;
+}
+.zip-hint {
+  font-size: 14px;
+  opacity: 0.75;
+  line-height: 1.8;
+  margin: 0 0 20px;
+}
+.zip-buttons {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .player-placeholder {
   height: 300px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   color: var(--cd-text-secondary);
+}
+.placeholder-hint {
+  font-size: 12px;
+  opacity: 0.7;
+  margin: 0;
+}
+
+.segment-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 12px;
+  padding: 10px 20px;
+  background-color: var(--cd-bg-soft);
+  border-top: 1.5px solid var(--cd-border);
+  border-bottom: 1.5px solid var(--cd-border);
+  color: var(--cd-text);
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.seg-nav {
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--cd-primary);
+}
+.seg-nav.disabled {
+  color: var(--cd-text-secondary);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.seg-info {
+  font-weight: 600;
 }
 
 .work-meta-bar {
   display: flex;
   padding: 16px 20px;
-  border-top: 1.5px solid var(--cd-border);
   background-color: var(--cd-bg-card);
   gap: 28px;
   flex-wrap: wrap;
+  align-items: center;
 }
 .meta-item {
   display: flex;
@@ -466,9 +752,29 @@ onMounted(loadWork)
   font-weight: 700;
   color: var(--cd-text);
 }
+.meta-actions {
+  margin-left: auto;
+}
+.download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 2px solid var(--cd-primary);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cd-primary);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.download-btn:hover {
+  background-color: var(--cd-primary);
+  color: #fff;
+}
 
 .timeline-section,
-.scenes-section,
 .description-section {
   padding: 20px;
 }
@@ -490,15 +796,11 @@ onMounted(loadWork)
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .section-hint {
   font-size: 13px;
   color: var(--cd-text-secondary);
-}
-
-.btn-sm {
-  padding: 5px 10px;
-  font-size: 12px;
 }
 
 .timeline-track {
@@ -536,6 +838,7 @@ onMounted(loadWork)
   gap: 4px;
   transition: border-color 0.15s ease;
   cursor: pointer;
+  position: relative;
 }
 .thumb-index {
   font-size: 20px;
@@ -546,10 +849,24 @@ onMounted(loadWork)
   font-size: 11px;
   color: var(--cd-text-secondary);
 }
-.timeline-item-actions {
+.playing-indicator {
+  position: absolute;
+  bottom: 4px;
   display: flex;
-  justify-content: center;
-  gap: 4px;
+  gap: 3px;
+}
+.playing-indicator span {
+  width: 3px;
+  height: 10px;
+  background-color: var(--cd-primary);
+  border-radius: 2px;
+  animation: bounce 0.9s infinite ease-in-out;
+}
+.playing-indicator span:nth-child(2) { animation-delay: 0.15s; }
+.playing-indicator span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bounce {
+  0%, 100% { transform: scaleY(0.4); }
+  50% { transform: scaleY(1); }
 }
 
 .empty-timeline {
@@ -561,79 +878,16 @@ onMounted(loadWork)
   border: 1.5px dashed var(--cd-border);
   border-radius: 8px;
 }
-
-.scene-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.empty-icon {
+  margin-bottom: 8px;
+  opacity: 0.6;
 }
-.scene-item {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
-  border: 1.5px solid var(--cd-border);
-  border-radius: 8px;
-  transition: all 0.15s ease;
+.empty-timeline p {
+  margin: 4px 0;
 }
-.scene-item:hover {
-  background-color: var(--cd-bg-soft);
-}
-.scene-item.active {
-  border-color: var(--cd-primary);
-  background-color: var(--cd-bg-soft);
-}
-.scene-index {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background-color: var(--cd-primary);
-  color: #fff;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.scene-info {
-  flex: 1;
-  cursor: pointer;
-}
-.scene-title {
-  font-weight: 600;
-  color: var(--cd-text);
-}
-.scene-meta {
+.empty-hint {
   font-size: 12px;
-  color: var(--cd-text-secondary);
-  margin-top: 2px;
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.meta-sep {
-  color: var(--cd-border);
-}
-.scene-video-url {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--cd-text-secondary);
   opacity: 0.7;
-}
-.scene-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.scene-play {
-  color: var(--cd-text-secondary);
-  cursor: pointer;
-}
-.empty-scenes {
-  text-align: center;
-  padding: 24px;
-  color: var(--cd-text-secondary);
 }
 
 .description-text {
@@ -644,9 +898,232 @@ onMounted(loadWork)
   white-space: pre-wrap;
 }
 
+.actions-section {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  padding: 12px 0;
+  flex-wrap: wrap;
+}
+
+/* 封面选择器 */
+.cover-selector {
+  width: 100%;
+}
+.cover-preview {
+  position: relative;
+  width: 120px;
+  height: 72px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1.5px solid var(--cd-border);
+  margin-bottom: 12px;
+}
+.preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.remove-cover {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.remove-cover:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+.cover-preview-placeholder {
+  width: 120px;
+  height: 72px;
+  border-radius: 8px;
+  border: 1.5px dashed var(--cd-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--cd-text-secondary);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.cover-tabs {
+  width: 100%;
+}
+.cover-tabs :deep(.el-tabs__nav) {
+  gap: 4px;
+}
+.cover-tabs :deep(.el-tabs__item) {
+  font-size: 12px;
+  height: 34px;
+}
+
+.cover-uploader {
+  width: 100%;
+}
+.uploader-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  border: 1.5px dashed var(--cd-border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--cd-text-secondary);
+  transition: all 0.15s;
+  font-size: 12px;
+}
+.uploader-btn:hover {
+  border-color: var(--cd-primary);
+  color: var(--cd-primary);
+}
+
+.no-assets {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px;
+  color: var(--cd-text-secondary);
+  font-size: 12px;
+}
+.asset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.asset-item {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.asset-item:hover {
+  border-color: var(--cd-primary);
+}
+.asset-item.active {
+  border-color: var(--cd-primary);
+  box-shadow: 0 0 0 2px var(--cd-primary);
+}
+.asset-item img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+.asset-name {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 2px 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 分享弹窗 */
+.share-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.share-work-info {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border: 1.5px solid var(--cd-border);
+  border-radius: 8px;
+}
+.share-cover {
+  width: 80px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.share-work-meta {
+  flex: 1;
+}
+.share-title {
+  font-weight: 700;
+  color: var(--cd-text);
+  margin-bottom: 4px;
+}
+.share-desc {
+  font-size: 12px;
+  color: var(--cd-text-secondary);
+}
+.share-link-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.share-label {
+  font-size: 12px;
+  color: var(--cd-text-secondary);
+  font-weight: 600;
+}
+.share-link-box {
+  width: 100%;
+}
+.share-link-box :deep(.el-input__wrapper) {
+  background-color: var(--cd-bg-soft);
+}
+.share-actions {
+  display: flex;
+  justify-content: center;
+}
+.share-expire {
+  font-size: 12px;
+  color: var(--cd-text-secondary);
+  text-align: center;
+}
+.share-generating {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 30px;
+  color: var(--cd-text-secondary);
+}
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 @media (max-width: 768px) {
   .work-meta-bar {
     gap: 20px;
+  }
+  .meta-actions {
+    width: 100%;
+    justify-content: center;
+    margin-left: 0;
+  }
+  .download-btn {
+    width: 100%;
+    justify-content: center;
   }
   .timeline-track {
     gap: 8px;
@@ -657,6 +1134,9 @@ onMounted(loadWork)
   .timeline-thumb {
     width: 96px;
     height: 56px;
+  }
+  .asset-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 </style>

@@ -50,6 +50,12 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '作品管理' }
           },
           {
+            path: 'work/share/:token',
+            name: 'WorkShare',
+            component: () => import('@/views/ShareWorkView.vue'),
+            meta: { title: '作品分享', public: true }
+          },
+          {
             path: 'work/:id',
             name: 'WorkDetail',
             component: () => import('@/views/WorkDetailView.vue'),

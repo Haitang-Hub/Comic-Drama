@@ -3,6 +3,8 @@ package com.comicdrama.resource.controller;
 import com.comicdrama.common.dto.PageQuery;
 import com.comicdrama.common.result.PageResult;
 import com.comicdrama.common.result.Result;
+import com.comicdrama.common.util.SecurityUtils;
+import com.comicdrama.resource.dto.WorkCreateDTO;
 import com.comicdrama.resource.entity.ComicWork;
 import com.comicdrama.resource.service.ComicWorkService;
 import lombok.RequiredArgsConstructor;
@@ -16,14 +18,11 @@ public class ComicWorkController {
     private final ComicWorkService comicWorkService;
 
     @PostMapping("/create")
-    public Result<ComicWork> create(@RequestParam Long taskId,
-                                     @RequestParam String title,
-                                     @RequestParam(required = false) String coverUrl,
-                                     @RequestParam(required = false) String finalVideoUrl,
-                                     @RequestParam(required = false) String resolution,
-                                     @RequestParam(required = false) Integer duration,
-                                     @RequestParam(required = false) Long userId) {
-        return Result.ok(comicWorkService.createWork(taskId, title, coverUrl, finalVideoUrl, resolution, duration, userId));
+    public Result<ComicWork> create(@RequestBody WorkCreateDTO dto) {
+        return Result.ok(comicWorkService.createWork(
+                dto.getTaskId(), dto.getTitle(), dto.getCoverUrl(),
+                dto.getFinalVideoUrl(), dto.getPrimaryVideoUrl(),
+                dto.getResolution(), dto.getDuration(), dto.getUserId()));
     }
 
     @GetMapping("/task/{taskId}")
@@ -34,13 +33,14 @@ public class ComicWorkController {
     @GetMapping("/page")
     public Result<PageResult<ComicWork>> page(PageQuery query,
                                                 @RequestParam(required = false) String keyword,
-                                                @RequestParam(required = false) Integer status,
-                                                @RequestParam(required = false) Long userId) {
+                                                @RequestParam(required = false) Integer status) {
+        Long userId = SecurityUtils.getCurrentUserIdOrNull();
         return Result.ok(comicWorkService.page(query, keyword, status, userId));
     }
 
     @GetMapping("/{id}")
     public Result<ComicWork> get(@PathVariable Long id) {
+        comicWorkService.incrementViewCount(id);
         return Result.ok(comicWorkService.getById(id));
     }
 
@@ -50,9 +50,18 @@ public class ComicWorkController {
         return Result.ok();
     }
 
-    @DeleteMapping("/{id}")
-    public Result<Void> delete(@PathVariable Long id) {
-        comicWorkService.delete(id);
-        return Result.ok();
+    @PostMapping("/{id}/share")
+    public Result<String> generateShareToken(@PathVariable Long id,
+                                              @RequestParam(defaultValue = "72") int expireHours) {
+        return Result.ok(comicWorkService.generateShareToken(id, expireHours));
+    }
+
+    @GetMapping("/share/{token}")
+    public Result<ComicWork> getByShareToken(@PathVariable String token) {
+        ComicWork work = comicWorkService.getByShareToken(token);
+        if (work == null) {
+            return Result.fail("分享链接无效或已过期");
+        }
+        return Result.ok(work);
     }
 }

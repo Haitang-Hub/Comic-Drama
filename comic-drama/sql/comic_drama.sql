@@ -548,18 +548,21 @@ CREATE TABLE `comic_work` (
   `title`          VARCHAR(255)          DEFAULT NULL              COMMENT '作品标题',
   `description`    VARCHAR(512)          DEFAULT NULL              COMMENT '作品简介',
   `cover_url`      VARCHAR(512)          DEFAULT NULL              COMMENT '作品封面URL',
-  `video_url`      VARCHAR(512)          DEFAULT NULL              COMMENT '合并后成片视频URL',
+  `video_url`      VARCHAR(512)          DEFAULT NULL              COMMENT '首段场景视频URL（可直接播放）',
+  `zip_url`        VARCHAR(512)          DEFAULT NULL              COMMENT '完整成片ZIP包URL（下载用）',
   `segment_count`  INT                   DEFAULT 0                 COMMENT '合并的视频段数',
   `merged_from`    VARCHAR(1024)         DEFAULT NULL              COMMENT '合并来源的场景视频ID列表（逗号分隔）',
   `duration`       INT                   DEFAULT 0                 COMMENT '作品总时长（秒）',
   `resolution`     VARCHAR(16)           DEFAULT NULL              COMMENT '分辨率',
   `aspect_ratio`   VARCHAR(16)           DEFAULT NULL              COMMENT '画面比例',
   `file_size`      BIGINT                DEFAULT 0                 COMMENT '成片文件大小（字节）',
-  `status`         TINYINT               DEFAULT 1                 COMMENT '状态：1正常 2已归档 3已删除',
+  `status`         TINYINT               DEFAULT 1                 COMMENT '状态：0草稿 1已完成 2已归档 3已删除',
   `is_public`      TINYINT               DEFAULT 0                 COMMENT '是否公开：0私有 1公开',
   `view_count`     INT                   DEFAULT 0                 COMMENT '浏览次数',
-  `like_count`     INT                   DEFAULT 0                 COMMENT '点赞次数',
-  `publish_time`   DATETIME              DEFAULT NULL              COMMENT '发布时间',
+  `like_count`     INT                   DEFAULT 0                 COMMENT '点赞数',
+  `share_token`    VARCHAR(128)          DEFAULT NULL              COMMENT '分享令牌',
+  `share_expire`   DATETIME             DEFAULT NULL              COMMENT '分享过期时间',
+  `publish_time`   DATETIME             DEFAULT NULL              COMMENT '发布时间',
   `create_time`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP  COMMENT '创建时间',
   `update_time`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `deleted`        TINYINT               DEFAULT 0                 COMMENT '逻辑删除：0未删 1已删',
@@ -923,6 +926,267 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 -- 清除节点状态（让任务从头执行）
 -- DELETE FROM task_node_state WHERE task_id = 2084235527391272961;
+
+-- =============================================================================
+-- MIGRATION: 补齐 comic_work 表新增列（解决"服务器错误，请稍后重试"报错）
+-- 执行时机：若数据库早于该脚本创建，请执行下面 ALTER TABLE 语句补齐缺失列。
+-- 错误现象：Unknown column 'xxx' in 'field list' -> 接口返回 500
+-- =============================================================================
+
+-- 1. comic_work 表补齐列
+SET @dbname = DATABASE();
+SET @tablename = 'comic_work';
+
+-- 1.1 zip_url（完整成片 ZIP 包 URL）
+SET @colname = 'zip_url';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `zip_url` VARCHAR(512) DEFAULT NULL COMMENT ''完整成片ZIP包URL（下载用）'' AFTER `video_url`',
+  'SELECT ''SKIP: zip_url already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.2 segment_count（合并视频段数）
+SET @colname = 'segment_count';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `segment_count` INT DEFAULT 0 COMMENT ''合并的视频段数'' AFTER `zip_url`',
+  'SELECT ''SKIP: segment_count already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.3 merged_from（合并来源ID列表）
+SET @colname = 'merged_from';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `merged_from` VARCHAR(1024) DEFAULT NULL COMMENT ''合并来源的场景视频ID列表（逗号分隔）'' AFTER `segment_count`',
+  'SELECT ''SKIP: merged_from already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.4 aspect_ratio（画面比例）
+SET @colname = 'aspect_ratio';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `aspect_ratio` VARCHAR(16) DEFAULT NULL COMMENT ''画面比例'' AFTER `resolution`',
+  'SELECT ''SKIP: aspect_ratio already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.5 file_size（文件大小）
+SET @colname = 'file_size';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `file_size` BIGINT DEFAULT 0 COMMENT ''成片文件大小（字节）'' AFTER `aspect_ratio`',
+  'SELECT ''SKIP: file_size already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.6 share_token（分享令牌）
+SET @colname = 'share_token';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `share_token` VARCHAR(128) DEFAULT NULL COMMENT ''分享令牌'' AFTER `like_count`',
+  'SELECT ''SKIP: share_token already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.7 share_expire（分享过期时间）
+SET @colname = 'share_expire';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `share_expire` DATETIME DEFAULT NULL COMMENT ''分享过期时间'' AFTER `share_token`',
+  'SELECT ''SKIP: share_expire already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.8 publish_time（发布时间）
+SET @colname = 'publish_time';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `publish_time` DATETIME DEFAULT NULL COMMENT ''发布时间'' AFTER `share_expire`',
+  'SELECT ''SKIP: publish_time already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.9 scene_video.storyboard_seq_range 列（用于重刷作品时按分镜序号严格排序）
+SET @tablename = 'scene_video';
+SET @colname = 'storyboard_seq_range';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE scene_video ADD COLUMN `storyboard_seq_range` VARCHAR(64) DEFAULT NULL COMMENT ''分镜序号区间（如 1-5）'' AFTER `storyboard_ids`',
+  'SELECT ''SKIP: scene_video.storyboard_seq_range already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2. comic_work_timeline 表（时间线表）如不存在则创建（字段与上方 CREATE TABLE 定义完全对齐）
+SET @tablename = 'comic_work_timeline';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename);
+SET @sql = IF(@exists = 0,
+  'CREATE TABLE `comic_work_timeline` (
+    `id`              BIGINT       NOT NULL AUTO_INCREMENT            COMMENT ''主键ID'',
+    `work_id`         BIGINT       NOT NULL                           COMMENT ''作品ID'',
+    `scene_group_id`  BIGINT               DEFAULT NULL               COMMENT ''场景组ID'',
+    `storyboard_id`   BIGINT               DEFAULT NULL               COMMENT ''分镜ID'',
+    `video_url`       VARCHAR(1024)         DEFAULT NULL              COMMENT ''场景视频URL'',
+    `order_index`     INT                 DEFAULT 0                   COMMENT ''播放顺序（从1开始）'',
+    `duration`        INT                 DEFAULT 0                   COMMENT ''片段时长（秒）'',
+    `create_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT ''创建时间'',
+    PRIMARY KEY (`id`),
+    KEY `idx_work_id` (`work_id`),
+    KEY `idx_scene_group_id` (`scene_group_id`),
+    KEY `idx_storyboard_id` (`storyboard_id`),
+    KEY `idx_order_index` (`order_index`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT=''作品时间线表（场景组分镜回放顺序）''',
+  'SELECT ''SKIP: comic_work_timeline already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+
+-- =============================================================================
+-- MIGRATION: 清空作品并按任务 + 场景视频重写（重新生成作品列表）
+-- 执行时机：作品顺序乱、video_url 存了 ZIP、或需要从头按 scene_video 重建
+-- 幂等策略：
+--   1) 先 TRUNCATE 清空 comic_work / comic_work_timeline
+--   2) 对每个 task（至少有 1 段 status=2 的场景视频）写入 1 条 comic_work
+--   3) 按 scene_group_id ASC + storyboard_seq_range 首序号 ASC + id ASC 写入时间线
+-- =============================================================================
+
+-- 0. 若下面 TRUNCATE 报外键错误，可先执行：SET FOREIGN_KEY_CHECKS = 0; 结束后 SET FOREIGN_KEY_CHECKS = 1;
+-- SET FOREIGN_KEY_CHECKS = 0;
+
+-- 1. 清空作品与时间线
+TRUNCATE TABLE comic_work_timeline;
+TRUNCATE TABLE comic_work;
+
+-- 2. 重写 comic_work（每个符合条件的 task 一条）
+--    排序规则（同时用于作品首段 video_url 的挑选）：
+--      scene_group_id ASC -> storyboard_seq_range 起点 ASC -> id ASC
+INSERT INTO comic_work
+  (work_no, task_id, user_id, title, description, cover_url, video_url, zip_url,
+   segment_count, merged_from, duration, resolution, aspect_ratio, file_size,
+   status, is_public, view_count, like_count, share_token, share_expire,
+   publish_time, create_time, update_time, deleted)
+SELECT
+  -- 作品编号：WORK-YYYYMMDD-<task_id>，唯一且可溯源
+  CONCAT('WORK-', DATE_FORMAT(t.create_time, '%Y%m%d'), '-', t.id)               AS work_no,
+  t.id                                                                            AS task_id,
+  t.user_id                                                                       AS user_id,
+  IFNULL(t.title, CONCAT('作品-', t.task_no))                                     AS title,
+  NULL                                                                            AS description,
+  -- 封面：任务封面优先；否则取第一段场景视频 base_frame_url；再无则 thumbnail_url
+  COALESCE(
+    t.cover_url,
+    (SELECT sv.base_frame_url
+       FROM scene_video sv
+      WHERE sv.task_id = t.id AND sv.status = 2 AND sv.video_url IS NOT NULL
+      ORDER BY
+        IFNULL(sv.scene_group_id, 0) ASC,
+        CAST(SUBSTRING_INDEX(IFNULL(CONCAT(sv.storyboard_seq_range, ','), '999999999,'), ',', 1) AS UNSIGNED) ASC,
+        sv.id ASC
+      LIMIT 1),
+    (SELECT sv.thumbnail_url
+       FROM scene_video sv
+      WHERE sv.task_id = t.id AND sv.status = 2 AND sv.video_url IS NOT NULL
+      ORDER BY
+        IFNULL(sv.scene_group_id, 0) ASC,
+        CAST(SUBSTRING_INDEX(IFNULL(CONCAT(sv.storyboard_seq_range, ','), '999999999,'), ',', 1) AS UNSIGNED) ASC,
+        sv.id ASC
+      LIMIT 1)
+  )                                                                               AS cover_url,
+  -- video_url：首段可直接播放的场景视频 URL（不是 ZIP）
+  (SELECT sv.video_url
+     FROM scene_video sv
+    WHERE sv.task_id = t.id AND sv.status = 2 AND sv.video_url IS NOT NULL
+    ORDER BY
+      IFNULL(sv.scene_group_id, 0) ASC,
+      CAST(SUBSTRING_INDEX(IFNULL(CONCAT(sv.storyboard_seq_range, ','), '999999999,'), ',', 1) AS UNSIGNED) ASC,
+      sv.id ASC
+    LIMIT 1)                                                                      AS video_url,
+  -- zip_url：任务 final_video_url 如果是 .zip 结尾就直接用；否则为空（用户也可在详情页下载 ZIP 时重新生成）
+  CASE
+    WHEN t.final_video_url IS NOT NULL
+         AND LOWER(SUBSTRING_INDEX(t.final_video_url, '?', 1)) LIKE '%.zip'
+         THEN t.final_video_url
+    ELSE NULL
+  END                                                                             AS zip_url,
+  -- segment_count：已完成(status=2)且有 URL 的视频数
+  (SELECT COUNT(*) FROM scene_video sv
+    WHERE sv.task_id = t.id AND sv.status = 2 AND sv.video_url IS NOT NULL)      AS segment_count,
+  -- merged_from：按顺序串的场景视频 ID
+  (SELECT GROUP_CONCAT(sv.id ORDER BY
+             IFNULL(sv.scene_group_id, 0) ASC,
+             CAST(SUBSTRING_INDEX(IFNULL(CONCAT(sv.storyboard_seq_range, ','), '999999999,'), ',', 1) AS UNSIGNED) ASC,
+             sv.id ASC SEPARATOR ',')
+     FROM scene_video sv
+    WHERE sv.task_id = t.id AND sv.status = 2 AND sv.video_url IS NOT NULL)      AS merged_from,
+  -- duration：所有完成视频时长向上取整的总和
+  (SELECT CAST(IFNULL(SUM(CEIL(sv.duration)), 0) AS SIGNED)
+     FROM scene_video sv
+    WHERE sv.task_id = t.id AND sv.status = 2)                                    AS duration,
+  -- 分辨率：优先任务表；否则场景视频中出现次数最多的分辨率
+  COALESCE(
+    t.resolution,
+    (SELECT sv2.resolution
+       FROM scene_video sv2
+      WHERE sv2.task_id = t.id AND sv2.status = 2 AND sv2.resolution IS NOT NULL
+      GROUP BY sv2.resolution ORDER BY COUNT(*) DESC LIMIT 1)
+  )                                                                               AS resolution,
+  t.aspect_ratio                                                                  AS aspect_ratio,
+  0                                                                               AS file_size,
+  1                                                                               AS status,
+  0                                                                               AS is_public,
+  0                                                                               AS view_count,
+  0                                                                               AS like_count,
+  NULL                                                                            AS share_token,
+  NULL                                                                            AS share_expire,
+  -- 发布时间：任务完成时间；否则任务结束时间；否则场景视频最后完成时间；否则当前
+  COALESCE(
+    CASE WHEN t.status = 2 THEN t.end_time END,
+    t.end_time,
+    (SELECT MAX(sv.update_time) FROM scene_video sv WHERE sv.task_id = t.id),
+    NOW()
+  )                                                                               AS publish_time,
+  NOW()                                                                           AS create_time,
+  NOW()                                                                           AS update_time,
+  0                                                                               AS deleted
+FROM comic_task t
+WHERE t.status IN (2, 4)   -- 只对"已完成"或"已暂停（中途已经有完成视频的任务也允许归档）"的任务建作品
+  AND EXISTS (
+        SELECT 1 FROM scene_video sv
+         WHERE sv.task_id = t.id AND sv.status = 2 AND sv.video_url IS NOT NULL
+       );
+
+-- 3. 重写 comic_work_timeline（每个场景视频一条，按严格剧情顺序写入 order_index 从 0 连续递增）
+INSERT INTO comic_work_timeline
+  (work_id, scene_group_id, storyboard_id, video_url, order_index, duration, create_time)
+SELECT
+  w.id                                                                   AS work_id,
+  sv.scene_group_id                                                      AS scene_group_id,
+  NULL                                                                   AS storyboard_id,
+  sv.video_url                                                           AS video_url,
+  -- order_index：每个 work 内从 0 开始，按严格剧情顺序连续递增
+  CAST(ROW_NUMBER() OVER (
+         PARTITION BY w.id
+         ORDER BY
+           IFNULL(sv.scene_group_id, 0) ASC,
+           CAST(SUBSTRING_INDEX(IFNULL(CONCAT(sv.storyboard_seq_range, ','), '999999999,'), ',', 1) AS UNSIGNED) ASC,
+           sv.id ASC
+       ) - 1 AS SIGNED)                                                  AS order_index,
+  CAST(IFNULL(CEIL(sv.duration), 0) AS SIGNED)                           AS duration,
+  NOW()                                                                  AS create_time
+FROM comic_work w
+JOIN scene_video sv
+  ON sv.task_id = w.task_id AND sv.status = 2 AND sv.video_url IS NOT NULL;
+
+-- SET FOREIGN_KEY_CHECKS = 1;
+
+-- 4. 验证：执行完后用下面 SQL 核对
+-- SELECT id, work_no, task_id, title, video_url, zip_url, segment_count, duration, resolution
+--   FROM comic_work ORDER BY id;
+-- SELECT work_id, order_index, scene_group_id, LEFT(video_url, 60) AS url_prefix
+--   FROM comic_work_timeline ORDER BY work_id, order_index;
+
 
 -- 清除进度日志
 -- DELETE FROM task_progress_log WHERE task_id = 2084235527391272961;

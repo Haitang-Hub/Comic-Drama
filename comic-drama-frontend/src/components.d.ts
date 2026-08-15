@@ -8,7 +8,6 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     Doodles: typeof import('./components/illustrations/Doodles.vue')['default']
-    ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
@@ -39,6 +38,7 @@ declare module 'vue' {
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTree: typeof import('element-plus/es')['ElTree']
+    ElUpload: typeof import('element-plus/es')['ElUpload']
     Marker: typeof import('./components/illustrations/Marker.vue')['default']
     NotebookDesk: typeof import('./components/illustrations/NotebookDesk.vue')['default']
     Pencil: typeof import('./components/illustrations/Pencil.vue')['default']
