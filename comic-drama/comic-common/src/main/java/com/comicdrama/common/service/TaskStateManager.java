@@ -79,4 +79,26 @@ public interface TaskStateManager {
     default int getStatus(Long taskId) {
         return -1;
     }
+
+    /**
+     * 将工作流内被修改过的（regenerateNode 的 overrides）持久化到 comic_task 表，
+     * 避免缓存淘汰 / 服务重启后 overrides 丢失导致下一步产出仍然是旧参数。
+     * 只更新非空字段；空字段代表未改动，保持原值。
+     *
+     * @param taskId        任务ID
+     * @param title         标题（可 null）
+     * @param storyReq      故事需求（可 null）
+     * @param aspectRatio   画面比例（可 null）
+     * @param resolution    分辨率（可 null）
+     * @param voiceEnabled  配音开关（可 null）
+     * @param execMode      执行模式（可 null）
+     * @param artStyle      画风（可 null）
+     * @param visualStyle   风格（可 null）
+     * @param remark        备注（可 null）
+     */
+    default void persistOverrides(Long taskId, String title, String storyReq,
+                                  String aspectRatio, String resolution,
+                                  Integer voiceEnabled, Integer execMode,
+                                  String artStyle, String visualStyle, String remark) {
+    }
 }

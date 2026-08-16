@@ -122,9 +122,61 @@ public class ComicWorkServiceImpl extends ServiceImpl<ComicWorkMapper, ComicWork
         return work != null ? sanitizeWork(hydrateExtraFields(work)) : null;
     }
 
+    /**
+     * 根据 id 懒创建/获取 ComicWork：
+     * 由于列表页 id = task.id，单条查询需要先用 taskId 匹配；
+     * 若 comic_work 不存在则从 comic_task 读取信息懒创建一条，保证编辑/分享等写入操作有载体。
+     */
+    private ComicWork getOrCreateByTaskId(Long id) {
+        if (id == null) return null;
+        // 1) 先按 taskId 查
+        ComicWork work = this.getOne(new LambdaQueryWrapper<ComicWork>()
+                .eq(ComicWork::getTaskId, id)
+                .last("LIMIT 1"));
+        if (work != null) return work;
+        // 2) 再按 work.id 查（老数据兼容）
+        work = super.getById(id);
+        if (work != null) return work;
+        // 3) 从 comic_task 读取，懒创建
+        try {
+            Map<String, Object> row = jdbcTemplate.queryForMap(
+                    "SELECT id, task_no, user_id, title, cover_url, final_video_url, " +
+                            "resolution, duration, aspect_ratio, create_time " +
+                            "FROM comic_task WHERE id = ? LIMIT 1", id);
+            if (row != null && !row.isEmpty()) {
+                Long taskId = ((Number) row.get("id")).longValue();
+                ComicWork nw = new ComicWork();
+                nw.setTaskId(taskId);
+                Object taskNo = row.get("task_no");
+                nw.setWorkNo(taskNo != null ? taskNo.toString() : ("WK" + taskId));
+                Object uid = row.get("user_id");
+                nw.setUserId(uid != null ? ((Number) uid).longValue() : 1L);
+                nw.setTitle(row.get("title") != null ? row.get("title").toString() : null);
+                nw.setCoverUrl(row.get("cover_url") != null ? row.get("cover_url").toString() : null);
+                Object video = row.get("final_video_url");
+                nw.setVideoUrl(video != null ? video.toString() : null);
+                nw.setResolution(row.get("resolution") != null ? row.get("resolution").toString() : null);
+                Object dur = row.get("duration");
+                nw.setDuration(dur != null ? ((Number) dur).intValue() : null);
+                Object ar = row.get("aspect_ratio");
+                nw.setAspectRatio(ar != null ? ar.toString() : null);
+                nw.setStatus(1);
+                nw.setIsPublic(0);
+                nw.setViewCount(0);
+                nw.setLikeCount(0);
+                this.save(nw);
+                log.info("懒创建作品记录: taskId={}, workId={}, title={}", taskId, nw.getId(), nw.getTitle());
+                return nw;
+            }
+        } catch (Exception e) {
+            log.warn("懒创建作品失败: id={}, msg={}", id, e.getMessage());
+        }
+        return null;
+    }
+
     @Override
     public ComicWork getById(Long id) {
-        ComicWork work = super.getById(id);
+        ComicWork work = getOrCreateByTaskId(id);
         if (work == null) {
             throw new BizException(ResultCode.DATA_NOT_FOUND);
         }
@@ -133,32 +185,86 @@ public class ComicWorkServiceImpl extends ServiceImpl<ComicWorkMapper, ComicWork
 
     @Override
     public PageResult<ComicWork> page(PageQuery query, String keyword, Integer status, Long userId) {
-        LambdaQueryWrapper<ComicWork> wrapper = new LambdaQueryWrapper<>();
+        // 简化：作品列表不再使用 comic_work 表，直接查询 comic_task 中「已完成」(status=2) 的任务
+        // 这样无需维护 comic_work 同步，列表只显示已完成任务
+        long pageIdx = Math.max(1L, query.getPage());
+        long pageSize = Math.max(1L, query.getSize());
+        long offset = (pageIdx - 1) * pageSize;
+
+        StringBuilder whereSql = new StringBuilder("WHERE t.status = 2");
+        java.util.List<Object> args = new java.util.ArrayList<>();
         if (StringUtils.hasText(keyword)) {
-            wrapper.like(ComicWork::getWorkNo, keyword)
-                    .or().like(ComicWork::getTitle, keyword);
-        }
-        if (status != null) {
-            wrapper.eq(ComicWork::getStatus, status);
-        } else {
-            wrapper.eq(ComicWork::getStatus, 1);
+            whereSql.append(" AND (t.task_no LIKE ? OR t.title LIKE ?)");
+            args.add("%" + keyword + "%");
+            args.add("%" + keyword + "%");
         }
         if (userId != null) {
-            wrapper.eq(ComicWork::getUserId, userId);
+            whereSql.append(" AND t.user_id = ?");
+            args.add(userId);
         }
-        wrapper.orderByDesc(ComicWork::getCreateTime);
-        Page<ComicWork> page = new Page<>(query.getPage(), query.getSize());
-        Page<ComicWork> result = this.page(page, wrapper);
-        List<ComicWork> records = result.getRecords().stream()
-                .map(this::hydrateExtraFields)
+
+        // count
+        String countSql = "SELECT COUNT(*) FROM comic_task t " + whereSql;
+        Long total;
+        try {
+            total = jdbcTemplate.queryForObject(countSql, Long.class, args.toArray());
+        } catch (Exception e) {
+            log.warn("作品列表查询任务总数失败: {}", e.getMessage());
+            total = 0L;
+        }
+        if (total == null) total = 0L;
+
+        java.util.List<ComicWork> records = new java.util.ArrayList<>();
+        if (total > 0) {
+            String listSql = "SELECT t.id, t.task_no, t.user_id, t.title, t.cover_url, t.final_video_url, " +
+                    "t.duration, t.resolution, t.aspect_ratio, t.create_time, t.update_time " +
+                    "FROM comic_task t " + whereSql +
+                    " ORDER BY t.update_time DESC, t.id DESC LIMIT ? OFFSET ?";
+            java.util.List<Object> listArgs = new java.util.ArrayList<>(args);
+            listArgs.add(pageSize);
+            listArgs.add(offset);
+            try {
+                records = jdbcTemplate.query(listSql, (rs, rowNum) -> {
+                    ComicWork w = new ComicWork();
+                    // 用 task.id 作为 work.id，保持前端 API（分享/编辑）按 id 调用的兼容性
+                    w.setId(rs.getLong("id"));
+                    String taskNo = rs.getString("task_no");
+                    w.setWorkNo(taskNo != null ? taskNo : ("WK" + rs.getLong("id")));
+                    w.setTaskId(rs.getLong("id"));
+                    w.setUserId(rs.getObject("user_id") != null ? rs.getLong("user_id") : null);
+                    w.setTitle(decodeTitle(rs.getString("title")));
+                    w.setCoverUrl(rs.getString("cover_url"));
+                    w.setVideoUrl(rs.getString("final_video_url"));
+                    w.setDuration(rs.getObject("duration") != null ? rs.getInt("duration") : null);
+                    w.setResolution(rs.getString("resolution"));
+                    w.setAspectRatio(rs.getString("aspect_ratio"));
+                    w.setStatus(1);
+                    w.setIsPublic(0);
+                    w.setViewCount(0);
+                    w.setLikeCount(0);
+                    w.setSegmentCount(0);
+                    w.setFileSize(0L);
+                    w.setCreateTime(rs.getTimestamp("create_time") != null
+                            ? rs.getTimestamp("create_time").toLocalDateTime() : null);
+                    w.setUpdateTime(rs.getTimestamp("update_time") != null
+                            ? rs.getTimestamp("update_time").toLocalDateTime() : null);
+                    return w;
+                }, listArgs.toArray());
+            } catch (Exception e) {
+                log.warn("作品列表查询任务分页失败: {}", e.getMessage());
+                records = new java.util.ArrayList<>();
+            }
+        }
+
+        records = records.stream()
                 .map(ComicWorkServiceImpl::sanitizeWork)
                 .collect(Collectors.toList());
-        return new PageResult<>(records, result.getTotal(), result.getCurrent(), result.getSize());
+        return new PageResult<>(records, total, pageIdx, pageSize);
     }
 
     @Override
     public String generateShareToken(Long id, int expireHours) {
-        ComicWork work = super.getById(id);
+        ComicWork work = getOrCreateByTaskId(id);
         if (work == null) {
             throw new BizException(ResultCode.DATA_NOT_FOUND);
         }
@@ -167,7 +273,7 @@ public class ComicWorkServiceImpl extends ServiceImpl<ComicWorkMapper, ComicWork
         try {
             jdbcTemplate.update(
                     "UPDATE comic_work SET share_token = ?, share_expire = ? WHERE id = ?",
-                    token, expire, id);
+                    token, expire, work.getId());
         } catch (Exception e) {
             log.warn("写入分享令牌失败（share_token 列可能尚未添加）: {}", e.getMessage());
             throw new BizException("数据库尚未添加 share_token 列，请先执行 SQL 迁移脚本");
@@ -217,7 +323,9 @@ public class ComicWorkServiceImpl extends ServiceImpl<ComicWorkMapper, ComicWork
     @Override
     public void incrementViewCount(Long id) {
         try {
-            jdbcTemplate.update("UPDATE comic_work SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ?", id);
+            ComicWork work = getOrCreateByTaskId(id);
+            if (work == null || work.getId() == null) return;
+            jdbcTemplate.update("UPDATE comic_work SET view_count = COALESCE(view_count, 0) + 1 WHERE id = ?", work.getId());
         } catch (Exception e) {
             log.warn("浏览量更新失败: {}", e.getMessage());
         }

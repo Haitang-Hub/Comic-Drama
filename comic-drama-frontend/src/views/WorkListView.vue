@@ -32,9 +32,6 @@
           <div class="cover-overlay">
             <el-icon :size="24"><VideoPlay /></el-icon>
           </div>
-          <el-tag type="success" effect="dark" class="status-tag" round>
-            已完成
-          </el-tag>
           <div class="work-card-actions" @click.stop>
             <el-button link type="primary" size="small" @click="openEditWork(work)">编辑</el-button>
             <el-button link type="primary" size="small" @click="openPlayer(work)">观看</el-button>
@@ -764,11 +761,6 @@ onMounted(loadData)
 }
 .work-card:hover .cover-overlay {
   opacity: 1;
-}
-.status-tag {
-  position: absolute;
-  top: 12px;
-  right: 12px;
 }
 .work-card-actions {
   position: absolute;

@@ -11,11 +11,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.annotation.PostConstruct;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 /**
  * 流水线执行控制器（供 task-service 远程调用触发流水线执行）。
@@ -44,11 +43,27 @@ public class PipelineController {
     @Value("${comic.pipeline.async-threads:2}")
     private int asyncThreads;
 
-    private final ExecutorService asyncExecutor = Executors.newFixedThreadPool(4, r -> {
-        Thread t = new Thread(r, "pipeline-async");
-        t.setDaemon(true);
-        return t;
-    });
+    @Value("${comic.pipeline.queue-capacity:50}")
+    private int queueCapacity;
+
+    private ExecutorService asyncExecutor;
+
+    @PostConstruct
+    void initExecutor() {
+        int threads = Math.max(1, asyncThreads);
+        int queue = Math.max(1, queueCapacity);
+        asyncExecutor = new ThreadPoolExecutor(
+                threads, threads, 60L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(queue),
+                r -> {
+                    Thread t = new Thread(r, "pipeline-async");
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()  // 队列满时由调用线程执行，起背压作用
+        );
+        log.info("PipelineController 异步线程池初始化：coreThreads={}, queueCapacity={}", threads, queue);
+    }
 
     /**
      * 执行流水线（异步执行，立即返回）。

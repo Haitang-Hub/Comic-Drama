@@ -41,6 +41,17 @@ function Write-OK($m)   { Write-Host "  [OK] $m" -ForegroundColor Green }
 function Write-W2($m)   { Write-Host "  [!]  $m" -ForegroundColor Yellow }
 function Write-Err($m)  { Write-Host "  [X]  $m" -ForegroundColor Red }
 
+function Wait-Port-Ready($port, $name, $timeoutSec = 90) {
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
+    $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port $port -WarningAction SilentlyContinue).TcpTestSucceeded
+    if ($ok) { Write-OK "$name (:$port) ready"; return $true }
+    Start-Sleep -Seconds 2
+  }
+  Write-W2 "$name (:$port) wait timeout"
+  return $false
+}
+
 function Find-ServiceJar($svcName) {
   $jarDir = Join-Path $BackendRoot "$svcName\target"
   if (-not (Test-Path $jarDir)) { return $null }
@@ -163,7 +174,7 @@ if (-not (Test-Path (Join-Path $FrontendRoot 'node_modules'))) {
 }
 # 启动前端前确保网关(8070)已就绪，避免页面打开时过早请求报 ECONNREFUSED/服务器错误
 Write-Step 'Wait for Gateway ready (before start frontend)'
-Wait-Port 8070 'Gateway' 90 | Out-Null
+Wait-Port-Ready 8070 'Gateway' 90 | Out-Null
 Start-CmdWindow -Title 'Frontend' -WorkDir $FrontendRoot -Cmd 'npm run dev'
 Write-OK "Frontend started (port $frontendPort)"
 
@@ -179,19 +190,9 @@ if (-not $SkipMock) {
 }
 
 Write-Step 'Wait for key services'
-function Wait-Port($port, $name, $timeoutSec = 90) {
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  while ($sw.Elapsed.TotalSeconds -lt $timeoutSec) {
-    $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port $port -WarningAction SilentlyContinue).TcpTestSucceeded
-    if ($ok) { Write-OK "$name (:$port) ready"; return $true }
-    Start-Sleep -Seconds 2
-  }
-  Write-W2 "$name (:$port) wait timeout"
-  return $false
-}
-Wait-Port 8761 'Eureka' 90 | Out-Null
-Wait-Port 8070 'Gateway' 90 | Out-Null
-Wait-Port $frontendPort 'Frontend' 90 | Out-Null
+Wait-Port-Ready 8761 'Eureka' 90 | Out-Null
+Wait-Port-Ready 8070 'Gateway' 90 | Out-Null
+Wait-Port-Ready $frontendPort 'Frontend' 90 | Out-Null
 
 Write-Host "`n================================================" -ForegroundColor Cyan
 Write-Host "  All services started!" -ForegroundColor Green

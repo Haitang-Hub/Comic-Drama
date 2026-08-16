@@ -46,6 +46,11 @@ public class ComicWorkController {
 
     @PutMapping
     public Result<Void> update(@RequestBody ComicWork work) {
+        // 前端传入的 id 可能是 task.id（列表来自 comic_task），通过 getById 懒创建 work 记录
+        Long refId = work.getId();
+        ComicWork existing = comicWorkService.getById(refId); // 内部已做 taskId 优先 + 懒创建
+        work.setId(existing.getId());
+        work.setTaskId(existing.getTaskId() != null ? existing.getTaskId() : refId);
         comicWorkService.updateById(work);
         return Result.ok();
     }

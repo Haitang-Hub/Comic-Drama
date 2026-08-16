@@ -1,9 +1,8 @@
 /**
- * WebSocket 封装（Phase-4 实时进度推送预留）。
+ * 任务进度 WebSocket 封装。
  *
- * Phase-1 后端尚未启用 WS 端点，本封装提供：
  *   - 自动重连（指数退避，上限 30s）
- *   - 心跳保活（30s ping）
+ *   - 心跳：服务端 30s 下发 ping，收到立即回 pong（客户端不主动 ping）
  *   - 订阅/取消订阅 topic（按 taskId 推送进度）
  *   - 降级：连接失败时静默放弃，不影响主流程轮询
  *
@@ -21,6 +20,10 @@ export interface ProgressPayload {
   stepName?: string
   progress: number
   totalProgress?: number
+  /** 当前步骤已完成子项数（批量步骤） */
+  itemDone?: number
+  /** 当前步骤总子项数（批量步骤） */
+  itemTotal?: number
   status?: number
   message?: string
   timestamp?: number
@@ -33,7 +36,6 @@ export interface TaskSocketOptions {
   onError?: (e: Event) => void
 }
 
-const HEARTBEAT_INTERVAL = 30000
 const MAX_RETRY_DELAY = 30000
 
 function resolveWsUrl(taskId: string): string {
@@ -48,41 +50,30 @@ export function createTaskSocket(taskId: string, opts: TaskSocketOptions = {}) {
   let ws: WebSocket | null = null
   let retryCount = 0
   let manualClose = false
-  let heartbeatTimer: ReturnType<typeof setInterval> | null = null
-
-  const clearHeartbeat = () => {
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer)
-      heartbeatTimer = null
-    }
-  }
-
-  const startHeartbeat = () => {
-    clearHeartbeat()
-    heartbeatTimer = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'ping' }))
-      }
-    }, HEARTBEAT_INTERVAL)
-  }
 
   const connect = () => {
     try {
       ws = new WebSocket(resolveWsUrl(taskId))
     } catch (e) {
-      // Phase-1 后端未就绪时静默失败
+      // 后端未就绪时静默失败
       return
     }
 
     ws.onopen = () => {
       retryCount = 0
-      startHeartbeat()
       opts.onOpen?.()
     }
 
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data)
+        if (msg.type === 'ping') {
+          // 服务端心跳 ping → 立即回 pong
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            try { ws.send(JSON.stringify({ type: 'pong' })) } catch { /* ignore */ }
+          }
+          return
+        }
         if (msg.type === 'pong') return
         if (msg.type === 'progress' || msg.taskId != null) {
           // 后端封装格式：{ type: "progress", data: payload, timestamp }
@@ -100,7 +91,6 @@ export function createTaskSocket(taskId: string, opts: TaskSocketOptions = {}) {
     }
 
     ws.onclose = () => {
-      clearHeartbeat()
       opts.onClose?.()
       if (!manualClose) {
         // 指数退避重连
@@ -116,7 +106,6 @@ export function createTaskSocket(taskId: string, opts: TaskSocketOptions = {}) {
   return {
     close() {
       manualClose = true
-      clearHeartbeat()
       if (ws) {
         ws.close()
         ws = null

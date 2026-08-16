@@ -16,6 +16,7 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -148,12 +149,25 @@ public class AssetImageStepHandler extends AbstractStepHandler {
     }
 
     @Override
-    protected int resolveBatchStartIndex(StepContext context, int totalSize) {
-        long existingCount = assetImageService.lambdaQuery()
+    protected int resolveBatchStartIndex(StepContext context, List<?> items) {
+        // 按 assetId 精确匹配已完成的首版资产图（base_image_id IS NULL）
+        Set<Long> completedAssetIds = assetImageService.lambdaQuery()
                 .eq(AssetImage::getTaskId, context.getTaskId())
-                .isNull(AssetImage::getBaseImageId) // 仅统计步骤4的首版资产图，排除步骤5的衍生图（有base_image_id）
-                .count();
-        return (int) Math.min(existingCount, totalSize);
+                .isNull(AssetImage::getBaseImageId)
+                .list()
+                .stream()
+                .map(AssetImage::getAssetId)
+                .collect(Collectors.toSet());
+
+        for (int i = 0; i < items.size(); i++) {
+            Object item = items.get(i);
+            if (item instanceof AssetDesign ad && !completedAssetIds.contains(ad.getId())) {
+                log.info("[ASSET_IMAGE] 断点续跑：跳过前 {} 项，从第 {} 项开始 taskId={}",
+                        i, i + 1, context.getTaskId());
+                return i;
+            }
+        }
+        return items.size();
     }
 
     @Override

@@ -2,10 +2,13 @@ package com.comicdrama.workflow.service.impl;
 
 import com.comicdrama.common.service.TaskStateManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -33,6 +36,40 @@ public class DefaultTaskStateManager implements TaskStateManager {
 
     public DefaultTaskStateManager(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    /**
+     * 服务启动后：扫描 DB 中 step=100（PLAN_PAUSE_CONTROL_STEP）控制行，
+     * 1) 过期的 → 清掉控制行；
+     * 2) 未过期的 → 回填内存缓存（否则重启后 plannedPause 设置丢失，用户无法续跑）。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void rehydratePlannedPauseOnStartup() {
+        try {
+            long now = System.currentTimeMillis();
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT task_id, remark FROM task_node_state WHERE step=? AND node_status=1",
+                    PLAN_PAUSE_CONTROL_STEP);
+            int rehydrated = 0, cleaned = 0;
+            for (Map<String, Object> row : rows) {
+                Long taskId = ((Number) row.get("task_id")).longValue();
+                String remark = (String) row.get("remark");
+                long expireMs;
+                try { expireMs = Long.parseLong(remark); } catch (Exception e) { expireMs = Long.MAX_VALUE; }
+                if (expireMs <= now) {
+                    clearPlannedPause(taskId);
+                    cleaned++;
+                } else {
+                    plannedPauseExpireCache.put(taskId, expireMs);
+                    rehydrated++;
+                }
+            }
+            if (rehydrated > 0 || cleaned > 0) {
+                log.info("[计划暂停-启动恢复] 从DB回填{}条，清理过期{}条", rehydrated, cleaned);
+            }
+        } catch (Exception e) {
+            log.warn("[计划暂停-启动恢复] 扫描失败，跳过: {}", e.getMessage());
+        }
     }
 
     @Override
@@ -238,5 +275,59 @@ public class DefaultTaskStateManager implements TaskStateManager {
         } catch (Exception e) {
             log.warn("clearPlannedPause DB更新失败 taskId={}", taskId, e);
         }
+    }
+
+    /**
+     * 将 overrides 字段增量 UPDATE 到 comic_task，避免服务重启后丢失。
+     */
+    @Override
+    public void persistOverrides(Long taskId, String title, String storyReq,
+                                 String aspectRatio, String resolution,
+                                 Integer voiceEnabled, Integer execMode,
+                                 String artStyle, String visualStyle, String remark) {
+        if (taskId == null) return;
+        StringBuilder sql = new StringBuilder(256);
+        sql.append("UPDATE comic_task SET ");
+        java.util.List<Object> args = new java.util.ArrayList<>(10);
+        boolean first = true;
+        first = appendIf(sql, args, first, "title", title);
+        first = appendIf(sql, args, first, "story_requirement", storyReq);
+        first = appendIf(sql, args, first, "aspect_ratio", aspectRatio);
+        first = appendIf(sql, args, first, "resolution", resolution);
+        if (voiceEnabled != null) {
+            if (!first) sql.append(", ");
+            sql.append("voice_enabled=?");
+            args.add(voiceEnabled);
+            first = false;
+        }
+        if (execMode != null) {
+            if (!first) sql.append(", ");
+            sql.append("exec_mode=?");
+            args.add(execMode);
+            first = false;
+        }
+        first = appendIf(sql, args, first, "art_style", artStyle);
+        first = appendIf(sql, args, first, "visual_style", visualStyle);
+        first = appendIf(sql, args, first, "remark", remark);
+        if (first) {
+            return; // 没有任何非空字段
+        }
+        sql.append(" WHERE id=?");
+        args.add(taskId);
+        try {
+            jdbcTemplate.update(sql.toString(), args.toArray());
+            log.info("[persistOverrides] comic_task 已更新 taskId={}", taskId);
+        } catch (Exception e) {
+            log.error("[persistOverrides] 更新comic_task失败 taskId={}, sql={}", taskId, sql, e);
+        }
+    }
+
+    private boolean appendIf(StringBuilder sql, java.util.List<Object> args,
+                             boolean first, String column, String value) {
+        if (value == null) return first;
+        if (!first) sql.append(", ");
+        sql.append(column).append("=?");
+        args.add(value);
+        return false;
     }
 }

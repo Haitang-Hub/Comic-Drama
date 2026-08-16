@@ -28,6 +28,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -570,12 +571,33 @@ public class VideoStepHandler extends AbstractStepHandler {
     }
 
     @Override
-    protected int resolveBatchStartIndex(StepContext context, int totalSize) {
-        // 改为按分镜粒度统计：每个分镜对应1条 SceneVideo
-        long existingCount = videoService.lambdaQuery()
+    protected int resolveBatchStartIndex(StepContext context, List<?> items) {
+        // 按 sceneGroupId + storyboardSeqRange 精确匹配已完成的场景视频
+        Set<String> completedKeys = videoService.lambdaQuery()
                 .eq(SceneVideo::getTaskId, context.getTaskId())
-                .count();
-        return (int) Math.min(existingCount, totalSize);
+                .list()
+                .stream()
+                .map(v -> v.getSceneGroupId() + ":" + v.getStoryboardSeqRange())
+                .collect(Collectors.toSet());
+
+        for (int i = 0; i < items.size(); i++) {
+            Object item = items.get(i);
+            if (item instanceof StoryboardBatchItem sbItem && sbItem.sb != null) {
+                String key = sbItem.groupId + ":" + buildSeqRange(sbItem.sb);
+                if (!completedKeys.contains(key)) {
+                    log.info("[VIDEO] 断点续跑：跳过前 {} 项，从第 {} 项开始 taskId={}",
+                            i, i + 1, context.getTaskId());
+                    return i;
+                }
+            }
+        }
+        return items.size();
+    }
+
+    /** 构建与 SceneVideo.storyboardSeqRange 一致的 key（分镜号区间，如 "1,2"） */
+    private String buildSeqRange(Storyboard sb) {
+        if (sb.getSeq() == null) return "";
+        return sb.getSeq() + "," + sb.getSeq();
     }
 
     @Override

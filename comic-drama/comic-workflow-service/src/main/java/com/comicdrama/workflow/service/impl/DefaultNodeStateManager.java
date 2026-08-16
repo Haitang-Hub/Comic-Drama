@@ -54,12 +54,21 @@ public class DefaultNodeStateManager implements NodeStateManager {
 
     @Override
     public List<NodeStateSnapshot> listNodeStates(Long taskId) {
-        return nodeStates.getOrDefault(taskId, Collections.emptyList());
+        List<NodeStateSnapshot> cached = nodeStates.get(taskId);
+        if (cached != null) {
+            return cached;
+        }
+        // 内存缓存为空（如服务重启后），从 DB 加载并回填缓存
+        List<NodeStateSnapshot> fromDb = loadFromDb(taskId);
+        if (!fromDb.isEmpty()) {
+            nodeStates.put(taskId, fromDb);
+        }
+        return fromDb;
     }
 
     @Override
     public NodeStateSnapshot getNodeState(Long taskId, Integer stepOrder) {
-        return nodeStates.getOrDefault(taskId, Collections.emptyList()).stream()
+        return listNodeStates(taskId).stream()
                 .filter(s -> s.step() == stepOrder)
                 .findFirst()
                 .orElse(null);
@@ -99,8 +108,9 @@ public class DefaultNodeStateManager implements NodeStateManager {
 
     @Override
     public Integer findLatestFailedStep(Long taskId) {
-        List<NodeStateSnapshot> states = nodeStates.get(taskId);
-        if (states == null) return null;
+        // 通过 listNodeStates 确保 DB 兜底加载
+        List<NodeStateSnapshot> states = listNodeStates(taskId);
+        if (states == null || states.isEmpty()) return null;
         return states.stream()
                 .filter(s -> s.nodeStatus() == 3)
                 .map(NodeStateSnapshot::step)
@@ -110,7 +120,8 @@ public class DefaultNodeStateManager implements NodeStateManager {
 
     @Override
     public Integer findResumeStep(Long taskId) {
-        List<NodeStateSnapshot> states = nodeStates.get(taskId);
+        // 通过 listNodeStates 确保 DB 兜底加载
+        List<NodeStateSnapshot> states = listNodeStates(taskId);
         if (states == null || states.isEmpty()) return null;
         // 查找第一个未完成的步骤：状态为 1（进行中）或 3（失败）
         // 按 step 升序排列，取第一个未完成的
@@ -120,5 +131,38 @@ public class DefaultNodeStateManager implements NodeStateManager {
                 .map(NodeStateSnapshot::step)
                 .min(Integer::compareTo)
                 .orElse(null);
+    }
+
+    /**
+     * 从数据库加载节点状态（用于服务重启后内存缓存丢失的兜底场景）。
+     */
+    private List<NodeStateSnapshot> loadFromDb(Long taskId) {
+        try {
+            return jdbcTemplate.query(
+                    "SELECT task_id, step, node_type, node_key, node_name, node_status, " +
+                            "start_time, end_time, duration_ms, input_snapshot, output_snapshot " +
+                            "FROM task_node_state WHERE task_id = ? ORDER BY step ASC",
+                    (rs, rowNum) -> new NodeStateSnapshot(
+                            rs.getLong("task_id"),
+                            rs.getInt("step"),
+                            rs.getString("node_type"),
+                            rs.getString("node_key"),
+                            rs.getString("node_name"),
+                            rs.getInt("node_status"),
+                            rs.getTimestamp("start_time") != null
+                                    ? rs.getTimestamp("start_time").toLocalDateTime() : null,
+                            rs.getTimestamp("end_time") != null
+                                    ? rs.getTimestamp("end_time").toLocalDateTime() : null,
+                            rs.getObject("duration_ms") != null
+                                    ? rs.getLong("duration_ms") : null,
+                            rs.getString("input_snapshot"),
+                            rs.getString("output_snapshot"),
+                            null
+                    ),
+                    taskId);
+        } catch (Exception e) {
+            log.error("loadFromDb 从数据库加载节点状态失败 taskId={}: {}", taskId, e.getMessage());
+            return Collections.emptyList();
+        }
     }
 }

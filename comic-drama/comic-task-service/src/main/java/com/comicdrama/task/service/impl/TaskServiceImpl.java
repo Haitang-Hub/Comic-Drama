@@ -689,9 +689,21 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         }
 
         int currentStep = task.getCurrentStep() == null ? 0 : task.getCurrentStep();
-        // 暂停时 currentStep 就是"正在执行的步骤"（步骤N生成到一半，currentStep=N），
-        // 继续时应该从该步骤本身续跑，resolveBatchStartIndex 会跳过已完成的项。
-        int startStep = Math.max(1, currentStep);
+        // 【P4】DB 级 findResumeStep 兜底：不盲信 comic_task.current_step。
+        // 查 task_node_state 中第一个非 DONE(8) / 非 PAUSED(5) 的步骤，避免 current_step=0 时从头重跑浪费产出。
+        int dbResumeStep = findResumeStepFromDb(id);
+        int startStep;
+        if (dbResumeStep > 0) {
+            startStep = dbResumeStep;
+            if (startStep != Math.max(1, currentStep)) {
+                log.warn("resume: current_step={} 与 DB node_state 不一致，优先采用 DB 兜底 startStep={}, taskId={}",
+                        currentStep, startStep, id);
+            }
+        } else {
+            // 暂停时 currentStep 就是"正在执行的步骤"（步骤N生成到一半，currentStep=N），
+            // 继续时应该从该步骤本身续跑，resolveBatchStartIndex 会跳过已完成的项。
+            startStep = Math.max(1, currentStep);
+        }
 
         if (startStep > 9) {
             // 已到最后一步，直接标完成
@@ -811,8 +823,16 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         writeProgressLog(id, currentStep, null, null, task.getProgress(), task.getProgress(),
                 "步骤 " + currentStep + " 审核通过，继续执行步骤 " + nextStep);
 
-        // 单步执行前清理 [nextStep, nextStep] 旧产物，避免 resolveBatchStartIndex 从 DB 取出旧记录数 → 成功 0/N
-        cleanArtifactsIfNeeded(id, nextStep, nextStep);
+        // 【P5】approve：仅 nextStep 在 node_state 中为 FAILED(9) 时清产物；
+        // 非失败（用户手动修改过或从未进入过该步骤）一律保留，避免 resolveBatchStartIndex 将用户修改后的产物误删。
+        if (isStepNodeFailed(id, nextStep)) {
+            cleanArtifactsIfNeeded(id, nextStep, nextStep);
+            writeProgressLog(id, nextStep, null, null, task.getProgress(), task.getProgress(),
+                    "步骤 " + nextStep + " 上次执行失败，清理旧产物后重新生成");
+        } else {
+            log.info("approve: nextStep={} 非 FAILED 状态，跳过 cleanArtifacts 避免误删手动修改产物 taskId={}",
+                    nextStep, id);
+        }
 
         // 调用 workflow-service 以 startStep=nextStep, maxStep=nextStep 单步运行（人工审核模式）
         try {
@@ -879,8 +899,14 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         writeProgressLog(id, currentStep, null, null, task.getProgress(), task.getProgress(),
                 "执行下一步骤：步骤 " + currentStep + " → 步骤 " + nextStep + "（单步执行，完成后暂停）");
 
-        // 单步执行前清理 [nextStep, nextStep] 旧产物，避免成功 0/N
-        cleanArtifactsIfNeeded(id, nextStep, nextStep);
+        // 【P5】executeNextStep：仅 nextStep FAILED(9) 时清产物；保留用户手动修改的分镜/视频结果。
+        if (isStepNodeFailed(id, nextStep)) {
+            cleanArtifactsIfNeeded(id, nextStep, nextStep);
+            writeProgressLog(id, nextStep, null, null, task.getProgress(), task.getProgress(),
+                    "步骤 " + nextStep + " 上次执行失败，清理旧产物后重新生成");
+        } else {
+            log.info("executeNextStep: nextStep={} 非 FAILED 状态，跳过 cleanArtifacts taskId={}", nextStep, id);
+        }
 
         // 调用 workflow-service 以 startStep=nextStep, maxStep=nextStep 单步运行
         try {
@@ -906,6 +932,58 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         } catch (Exception e) {
             log.error("executeNextStep 调用 workflow-service 异常 taskId={}", id, e);
             throw new BizException("执行下一步异常：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 【P4】DB 级 findResumeStep：扫描 task_node_state，返回第一个未完成步骤的 step。
+     * node_status 枚举（对齐 NodeStateManager）：5=PAUSED，6=PENDING，7=IN_PROGRESS，8=DONE，9=FAILED。
+     * 规则：
+     *   - 遇到第一个 FAILED(9) / IN_PROGRESS(7) / PENDING(6) → 直接返回它（必跑）
+     *   - 遇到 PAUSED(5) → 返回它（断点续跑起点）
+     *   - DONE(8) → 跳过
+     *   - 无记录 → 返回 0（调用方退回到 currentStep 逻辑）
+     */
+    private int findResumeStepFromDb(Long taskId) {
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT step, node_status FROM task_node_state WHERE task_id=? AND step BETWEEN 1 AND 9 " +
+                            "ORDER BY step ASC",
+                    taskId);
+            if (rows == null || rows.isEmpty()) return 0;
+            int firstDone = 0;
+            for (Map<String, Object> row : rows) {
+                int step = ((Number) row.get("step")).intValue();
+                Integer ns = row.get("node_status") == null ? null : ((Number) row.get("node_status")).intValue();
+                if (ns == null) continue;
+                if (ns == 8) { // DONE
+                    firstDone = Math.max(firstDone, step);
+                    continue;
+                }
+                // 非 DONE 状态（PAUSED/IN_PROGRESS/PENDING/FAILED）：此步骤就是续跑起点
+                return step;
+            }
+            // 所有有记录的步骤都 DONE → 返回 firstDone + 1（若 firstDone=9 调用方会走 DONE 分支）
+            return firstDone > 0 ? firstDone + 1 : 0;
+        } catch (Exception e) {
+            log.warn("findResumeStepFromDb 查询失败 taskId={}: {}", taskId, e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * 【P5】判断指定步骤在 task_node_state 中是否为 FAILED(9)。
+     * approve / executeNextStep 在清理前调用：仅 FAILED 清，其余保留用户手动修改。
+     */
+    private boolean isStepNodeFailed(Long taskId, int step) {
+        try {
+            Integer ns = jdbcTemplate.queryForObject(
+                    "SELECT node_status FROM task_node_state WHERE task_id=? AND step=? LIMIT 1",
+                    Integer.class, taskId, step);
+            return ns != null && ns == 9;
+        } catch (Exception e) {
+            log.warn("isStepNodeFailed 查询失败 taskId={}, step={}: {}", taskId, step, e.getMessage());
+            return false;
         }
     }
 

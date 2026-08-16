@@ -72,6 +72,12 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
     @Value("${comic.pipeline.max-steps:9}")
     private int defaultMaxSteps;
 
+    /** resource-service 地址（与 VideoMergeStepHandler 对齐），用于 rebuildComicWork 前探测 comic_work 是否已建 */
+    @Value("${app.resource-service.url:http://127.0.0.1:8105}")
+    private String resourceServiceUrl;
+
+    private final org.springframework.web.client.RestTemplate rebuildRestTemplate = new org.springframework.web.client.RestTemplate();
+
     @Override
     public void executePipeline(Long taskId) {
         executeFromStep(taskId, 1, defaultMaxSteps);
@@ -172,11 +178,16 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
                     continue;
                 }
 
-                // 清理当前步骤的旧产物，确保 resolveBatchStartIndex 不会因旧产物而跳过项目。
-                // 场景：上游步骤被重新生成后，下游步骤的旧产物已过期，需要清理后重新生成。
-                // 即使首次执行（无旧产物），清理也是安全的（空操作）。
-                deleteStepArtifacts(taskId, step.getOrder(), step.getOrder());
-                log.info("---------- 已清理步骤{}旧产物，开始执行 ----------", step.getName());
+                // 清理当前步骤的旧产物：
+                // - startStep 自身的产物不清理（保留给 resolveBatchStartIndex 按ID精确跳过已完成项）
+                //   ※ regenerateNode 已在调用 executeFromStep 前自行清理了 startStep 产物
+                // - startStep 之后的步骤：清理旧产物（上游已变更，下游旧产物作废）
+                if (step.getOrder() > startStep) {
+                    deleteStepArtifacts(taskId, step.getOrder(), step.getOrder());
+                    log.info("---------- 已清理步骤{}旧产物（下游步骤），开始执行 ----------", step.getName());
+                } else {
+                    log.info("---------- 保留步骤{}已有产物（断点续跑跳过已完成项） ----------", step.getName());
+                }
 
                 log.info("---------- 执行步骤：{} (order={}, code={}) ----------",
                         step.getName(), step.getOrder(), step.getCode());
@@ -348,6 +359,8 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
                 taskId, stepOrder, overrides, curStatus);
 
         // 0. 将 overrides 中的 artStyle/visualStyle 应用到 TaskInfoProvider 缓存的 DTO 中
+        String overrideArtStyle = null;
+        String overrideVisualStyle = null;
         if (overrides != null && !overrides.isEmpty()) {
             WorkflowTaskInfo taskInfo = taskInfoProvider.getTaskInfo(taskId);
             if (taskInfo != null) {
@@ -355,32 +368,53 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
                 if (dto == null) dto = new TaskCreateDTO();
                 boolean changed = false;
                 if (overrides.containsKey("artStyle")) {
-                    dto.setArtStyle((String) overrides.get("artStyle"));
+                    overrideArtStyle = (String) overrides.get("artStyle");
+                    dto.setArtStyle(overrideArtStyle);
                     changed = true;
                 }
                 if (overrides.containsKey("visualStyle")) {
-                    dto.setVisualStyle((String) overrides.get("visualStyle"));
+                    overrideVisualStyle = (String) overrides.get("visualStyle");
+                    dto.setVisualStyle(overrideVisualStyle);
                     changed = true;
                 }
                 if (changed) {
                     // 重新注册以刷新缓存
                     taskInfoProvider.registerTask(taskId, taskInfo.userId(), taskInfo.title(), dto);
-                    log.info("[regenerateNode] 已将 overrides 应用到 taskInfo 缓存 dto, taskId={}", taskId);
+                    // 【DB5】同步持久化到 comic_task 表，避免缓存淘汰/重启后 overrides 丢失
+                    taskStateManager.persistOverrides(taskId, null, null, null, null,
+                            null, null, overrideArtStyle, overrideVisualStyle, null);
+                    log.info("[regenerateNode] 已将 overrides 应用到 taskInfo 缓存与 comic_task DB, taskId={}", taskId);
                 }
             }
         }
 
-        // 1. 删除数据库旧产物：任何步骤重生成都会导致下游产物失效，必须级联清理。
-        // 步骤4(资产绘图)变了 → 步骤5(衍生)6(分镜图)8(视频)9(合并)全部作废
-        // 步骤6(分镜绘图)变了 → 步骤8(视频)9(合并)作废
-        // 以此类推。
-        int cleanFrom = stepOrder;
-        int cleanTo = 9;
-        log.info("[regenerateNode] 级联清理步骤{}~{}的旧产物 taskId={}", cleanFrom, cleanTo, taskId);
-        deleteStepArtifacts(taskId, cleanFrom, cleanTo);
+        // 【D1】按步骤依赖矩阵计算"真正受影响需要清理"的下游步骤，
+        // 不再级联清空 stepOrder~9 全部（避免改一步资产，下游分镜/视频/合并全重跑）。
+        java.util.Set<Integer> affected = calculateDependents(stepOrder);
+        affected.add(stepOrder); // 自身当然要清
+        java.util.List<Integer> sorted = affected.stream().sorted().toList();
+        int minAffected = sorted.get(0);
+        int maxAffected = sorted.get(sorted.size() - 1);
+        log.info("[regenerateNode] 依赖矩阵计算：修改步骤{} → 受影响步骤{}（删除产物+重置node_state），taskId={}",
+                stepOrder, sorted, taskId);
 
-        // 2. 重置 [cleanFrom, 9] 的节点状态
-        nodeStateManager.resetNodeStatesFrom(taskId, cleanFrom);
+        // 1. 仅清"受影响步骤"的产物，未命中的步骤（例如改步骤4→跳过步骤6,7,8...）保留不删
+        for (int s : sorted) {
+            deleteStepArtifacts(taskId, s, s);
+        }
+
+        // 2. 只重置"受影响步骤"的 node_state。
+        //    若步骤连续 [minAffected, maxAffected] 正好等于 sorted（通常因为传递闭包生成连续区间），
+        //    直接 resetNodeStatesFrom(min) 更高效；否则逐个 resetNodeState。
+        if (maxAffected - minAffected + 1 == sorted.size()) {
+            nodeStateManager.resetNodeStatesFrom(taskId, minAffected);
+            log.debug("[regenerateNode] 使用批量 resetNodeStatesFrom({}, {})", taskId, minAffected);
+        } else {
+            for (int s : sorted) {
+                nodeStateManager.resetNodeState(taskId, s);
+            }
+            log.debug("[regenerateNode] 使用逐个 resetNodeState 共{}步", sorted.size());
+        }
 
         // 3. 重新执行该步骤（单步：startStep == maxStep == stepOrder）
         executeFromStep(taskId, stepOrder, stepOrder);
@@ -694,6 +728,10 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
             // 8. 回到暂停（或原失败/已完成）状态
             markBackToIdleState(taskId, curStatus, targetStep.getOrder(), totalProgress);
 
+            // 【I2】如 ComicWork 已归档（任务完成/失败前至少跑过步骤9），重建作品记录（ZIP + 时间线 + manifest）
+            //     保证"单张微调后 → 成片立即同步"。尽力而为，失败不影响单图重生成结果。
+            tryRebuildComicWork(taskId, "资产图");
+
             log.info("========== {}完成 taskId={}, imageId={} ==========", opName, taskId, imageId);
         } catch (BizException e) {
             log.warn("{}业务异常 taskId={}, imageId={}: {}", opName, taskId, imageId, e.getMessage());
@@ -818,6 +856,9 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
                             100, totalProgress, "单张分镜图已重生成"));
 
             markBackToIdleState(taskId, curStatus, targetStep.getOrder(), totalProgress);
+
+            // 【I2】重建 comic_work（若已归档）
+            tryRebuildComicWork(taskId, "分镜图");
 
             log.info("========== {}完成 taskId={}, imageId={} ==========", opName, taskId, imageId);
         } catch (BizException e) {
@@ -982,6 +1023,9 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
 
             markBackToIdleState(taskId, curStatus, targetStep.getOrder(), totalProgress);
 
+            // 【I2】场景视频变了最需要重建成片 → 尽力触发步骤9 VIDEO_MERGE 单步重跑
+            tryRebuildComicWork(taskId, "场景视频");
+
             log.info("========== {}完成 taskId={}, videoId={}, seq={} ==========",
                     opName, taskId, videoId, targetSeq);
         } catch (BizException e) {
@@ -1041,6 +1085,115 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
         broadcaster.publish(com.comicdrama.common.constant.CacheConstants.CHANNEL_TASK_STATUS,
                 new TaskStatusChangeEvent(this, taskId, 1, target));
         log.info("[单张重生成] 任务状态已回到 taskId={}, targetStatus={}({})", taskId, target, targetLabel);
+    }
+
+    /**
+     * 【I2】单条重生成成功后：若该任务已归档过 comic_work（resource-service GET 返回 id 非空），
+     * 则触发一次步骤9 VIDEO_MERGE 单步重跑，让最新的 scene_video/分镜/资产图反映到：
+     *   - comic_work.video_url / cover_url / segment_count 字段
+     *   - comic_work_timeline 播放顺序
+     *   - comic_task.final_work_manifest / final_video_url / zip_url
+     *
+     * <p>尽力而为：失败只记 WARN，不影响当前单图/单视频重生成成功结论。</p>
+     */
+    private void tryRebuildComicWork(Long taskId, String trigger) {
+        try {
+            // 1) 探测 comic_work 是否已创建（没创建说明步骤9 VIDEO_MERGE 从未成功过，无需 rebuild）
+            boolean workExists;
+            try {
+                String url = resourceServiceUrl + "/api/work/task/" + taskId;
+                @SuppressWarnings("rawtypes")
+                org.springframework.http.ResponseEntity<com.comicdrama.common.result.Result> resp =
+                        rebuildRestTemplate.getForEntity(url, com.comicdrama.common.result.Result.class);
+                Object data = resp.getBody() != null ? resp.getBody().getData() : null;
+                if (data instanceof java.util.Map<?, ?> m && m.get("id") != null) {
+                    workExists = true;
+                } else {
+                    workExists = false;
+                }
+            } catch (Exception probeEx) {
+                log.debug("[tryRebuildComicWork] 探测 comic_work 失败（可能resource-service未启动/无记录），跳过: {}",
+                        probeEx.getMessage());
+                return;
+            }
+            if (!workExists) {
+                log.info("[tryRebuildComicWork] taskId={} 未创建 comic_work，跳过重建（触发源：{}）", taskId, trigger);
+                return;
+            }
+
+            // 2) 触发步骤9 VIDEO_MERGE 单步重跑：复用 deleteStepArtifacts → resetNodeStatesFrom → executeFromStep
+            log.info("[tryRebuildComicWork] taskId={} 检测到 comic_work 已存在，启动步骤9 VIDEO_MERGE 重建（触发源：{}）",
+                    taskId, trigger);
+            deleteStepArtifacts(taskId, 9, 9);
+            nodeStateManager.resetNodeStatesFrom(taskId, 9);
+            executeFromStep(taskId, 9, 9);
+            log.info("[tryRebuildComicWork] taskId={} VIDEO_MERGE 重建完成（触发源：{}）", taskId, trigger);
+        } catch (Exception e) {
+            log.warn("[tryRebuildComicWork] taskId={} 重建失败（触发源：{}）：{}（不会影响本次单条重生成结果）",
+                    taskId, trigger, e.getMessage());
+        }
+    }
+
+    /**
+     * 【D1】步骤依赖矩阵（"被改步骤 → 其产物作为直接/间接输入的下游步骤"集合）。
+     * 仅返回需要清下游的 steps，不含 stepOrder 自身（调用方会补）。
+     *
+     * <p>设计原则：
+     * <ul>
+     *   <li>文本/设计类（1 SUMMARY / 2 STORYBOARD / 3 ASSET_DESIGN）：改动会让下游几乎所有步骤语义变化
+     *       → 保持"级联下游全清"的旧行为，避免产出前后不一致。</li>
+     *   <li>生成/结果类（4 ASSET_IMAGE / 5 ASSET_DERIVE / 6 STORYBOARD_IMAGE / 7 AUDIO / 8 VIDEO）：
+     *       只清理"直接用该步骤产物作为源输入"的下游。举例：用户只改 1 张资产图（步骤4），
+     *       分镜脚本没变、配音台词没变 → 步骤6/7 的结果并不必然变旧（分镜图可能引用其他资产、
+     *       配音完全不受资产影响），不应被强制清掉；只要 5(衍生) 派生自它就清 5。</li>
+     * </ul>
+     * </p>
+     *
+     * <p>强依赖（保守定义，宁可多清一步也不少清导致"旧结果带着未更新的图合并"）：
+     * <pre>
+     * 4 ASSET_IMAGE     → 5 ASSET_DERIVE, 8 VIDEO, 9 VIDEO_MERGE
+     *                      （首版资产图 → 衍生图用它；视频用资产图做角色/道具一致性；合并时重打包）
+     * 5 ASSET_DERIVE    → 6 STORYBOARD_IMAGE, 8 VIDEO, 9 VIDEO_MERGE
+     *                      （衍生图 → 分镜图会贴它；视频渲染同；合并）
+     * 6 STORYBOARD_IMAGE → 8 VIDEO, 9 VIDEO_MERGE
+     *                      （分镜图是视频关键帧源；合并）
+     * 7 AUDIO           → 9 VIDEO_MERGE  （只合并阶段拼接配音）
+     * 8 VIDEO           → 9 VIDEO_MERGE  （视频段是合并源）
+     * </pre>
+     * </p>
+     */
+    private java.util.Set<Integer> calculateDependents(int stepOrder) {
+        java.util.Set<Integer> s = new java.util.HashSet<>();
+        switch (stepOrder) {
+            case 1: // SUMMARY：故事需求/摘要 —— 所有下游都依赖这份"文本真相源"
+                for (int i = 2; i <= 9; i++) s.add(i);
+                break;
+            case 2: // STORYBOARD：分镜脚本 —— 设计、分镜图、配音、视频、合并都直接基于它
+                for (int i = 3; i <= 9; i++) s.add(i);
+                break;
+            case 3: // ASSET_DESIGN：资产设计（描述文本）—— 后续所有资产绘图/视频（含设计描述的prompt）变
+                for (int i = 4; i <= 9; i++) s.add(i);
+                break;
+            case 4: // ASSET_IMAGE
+                s.add(5); s.add(8); s.add(9);
+                break;
+            case 5: // ASSET_DERIVE
+                s.add(6); s.add(8); s.add(9);
+                break;
+            case 6: // STORYBOARD_IMAGE
+                s.add(8); s.add(9);
+                break;
+            case 7: // AUDIO
+                s.add(9);
+                break;
+            case 8: // VIDEO
+                s.add(9);
+                break;
+            case 9:
+            default:
+                break;
+        }
+        return s;
     }
 
     /**

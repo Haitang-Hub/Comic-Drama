@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -168,11 +169,24 @@ public class AudioStepHandler extends AbstractStepHandler {
     }
 
     @Override
-    protected int resolveBatchStartIndex(StepContext context, int totalSize) {
-        long existingCount = audioService.lambdaQuery()
+    protected int resolveBatchStartIndex(StepContext context, List<?> items) {
+        // 按 storyboardId 精确匹配已完成的音频，避免"按条数跳过"在中间有缺失时漏生成
+        Set<Long> completedSbIds = audioService.lambdaQuery()
                 .eq(StoryboardAudio::getTaskId, context.getTaskId())
-                .count();
-        return (int) Math.min(existingCount, totalSize);
+                .list()
+                .stream()
+                .map(StoryboardAudio::getStoryboardId)
+                .collect(Collectors.toSet());
+
+        for (int i = 0; i < items.size(); i++) {
+            Object item = items.get(i);
+            if (item instanceof Storyboard sb && !completedSbIds.contains(sb.getId())) {
+                log.info("[AUDIO] 断点续跑：跳过前 {} 项，从第 {} 项开始 taskId={}",
+                        i, i + 1, context.getTaskId());
+                return i;
+            }
+        }
+        return items.size();
     }
 
     @Override

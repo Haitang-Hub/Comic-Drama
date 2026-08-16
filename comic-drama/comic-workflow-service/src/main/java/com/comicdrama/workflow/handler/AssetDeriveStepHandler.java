@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -207,12 +208,25 @@ public class AssetDeriveStepHandler extends AbstractStepHandler {
     }
 
     @Override
-    protected int resolveBatchStartIndex(StepContext context, int totalSize) {
-        long existingCount = assetImageService.lambdaQuery()
+    protected int resolveBatchStartIndex(StepContext context, List<?> items) {
+        // 按 assetId 精确匹配已完成的衍生资产图（base_image_id IS NOT NULL）
+        Set<Long> completedAssetIds = assetImageService.lambdaQuery()
                 .eq(AssetImage::getTaskId, context.getTaskId())
                 .isNotNull(AssetImage::getBaseImageId)
-                .count();
-        return (int) Math.min(existingCount, totalSize);
+                .list()
+                .stream()
+                .map(AssetImage::getAssetId)
+                .collect(Collectors.toSet());
+
+        for (int i = 0; i < items.size(); i++) {
+            Object item = items.get(i);
+            if (item instanceof AssetDesign ad && !completedAssetIds.contains(ad.getId())) {
+                log.info("[ASSET_DERIVE] 断点续跑：跳过前 {} 项，从第 {} 项开始 taskId={}",
+                        i, i + 1, context.getTaskId());
+                return i;
+            }
+        }
+        return items.size();
     }
 
     @Override

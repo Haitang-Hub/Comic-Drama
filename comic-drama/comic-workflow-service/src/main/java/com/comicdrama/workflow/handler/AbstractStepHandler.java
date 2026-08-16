@@ -203,7 +203,7 @@ public abstract class AbstractStepHandler {
             T testItem = items.get(testIdx);
 
             log.info("[{}] === 测试阶段：处理第 {}/{} 项 ===", step.getName(), testIdx + 1, total);
-            reportProgress(context, 5, step.getName() + " - 进行中（1/" + total + "）");
+            reportProgress(context, 5, "进行中（1/" + total + "）", 1, total);
 
             R testResult;
             try {
@@ -225,15 +225,16 @@ public abstract class AbstractStepHandler {
 
         // === 第二阶段：批量 ===
         int batchStart = Math.max(startIndex, 1);
-        int failedInBatch = 0;
 
         for (int i = batchStart; i < total; i++) {
             checkPaused(context);
 
             T item = items.get(i);
-            int progress = (int) (((i - 1) / (double) total) * 80) + 10;
+            // 线性进度：已完成项占比映射到 5%~95% 区间
+            // 测试项占总进度的 1/total（与其他项相同），不再独占 10%
+            int progress = (int) (5 + ((double) (i) / total) * 90);
             reportProgress(context, progress,
-                    step.getName() + " - 批量中（" + (i) + "/" + total + "）");
+                    "批量中（" + (i + 1) + "/" + total + "）", Math.min(i + 1, total), total);
 
             try {
                 R result = processor.apply(item, i);
@@ -252,17 +253,23 @@ public abstract class AbstractStepHandler {
 
         // === 结果统计 ===
         int finalProgress = (int) ((successCount / (double) total) * 100);
-        String summary = String.format("%s完成：成功 %d/%d", step.getName(), successCount, total);
+        String summary;
+        if (failedCount == 0) {
+            summary = "已完成";
+        } else if (successCount > 0) {
+            summary = String.format("完成 %d/%d，%d 项失败", successCount, total, failedCount);
+        } else {
+            summary = String.format("全部失败 %d/%d", failedCount, total);
+        }
 
         if (failedCount > 0 && successCount > 0) {
-            summary += String.format("，%d 项失败（已保留成功产物）", failedCount);
-            reportProgress(context, Math.max(finalProgress, 10), summary);
+            reportProgress(context, Math.max(finalProgress, 10), summary, successCount, total);
         } else if (failedCount == total) {
             // 全部失败
             throw new BizException("[" + step.getCode() + "] 所有项目处理失败，无法继续执行后续步骤");
         }
 
-        reportProgress(context, Math.max(finalProgress, 100), summary);
+        reportProgress(context, Math.max(finalProgress, 100), summary, successCount, total);
         log.info("[{}] {}，成功={}, 失败={}, total={}",
                 step.getName(), summary, successCount, failedCount, total);
 
@@ -285,7 +292,7 @@ public abstract class AbstractStepHandler {
         }
 
         // 计算起始索引（断点续跑时跳过已完成的项）
-        int startIndex = resolveBatchStartIndex(context, items.size());
+        int startIndex = resolveBatchStartIndex(context, items);
 
         return executeBatchWithTestFirst(context, items, startIndex,
                 (item, index) -> {
@@ -324,28 +331,44 @@ public abstract class AbstractStepHandler {
 
     /**
      * 计算批量处理的起始索引（用于断点续跑）。
-     * 默认从 0 开始，子类可覆写以实现跳过已完成的项。
+     * 默认从 0 开始，子类可覆写以实现按ID精确匹配跳过已完成的项。
+     *
+     * @param context 步骤上下文
+     * @param items    待处理的批量项目列表（用于逐项检查是否已完成）
+     * @return 第一个未完成项的索引，若全部已完成则返回 items.size()
      */
-    protected int resolveBatchStartIndex(StepContext context, int totalSize) {
+    protected int resolveBatchStartIndex(StepContext context, List<?> items) {
         return 0;
     }
 
     // ==================== 进度上报 ====================
 
     /**
-     * 按步骤进度记录（0-100），同时推送 WebSocket 事件。
+     * 按步骤进度记录（无 batch 子项）—— 同时推送 WebSocket 事件。
      */
     protected void reportProgress(StepContext context, int progress, String message) {
+        reportProgress(context, progress, message, null, null);
+    }
+
+    /**
+     * 按步骤进度记录（批量步骤专用，携带 itemDone/itemTotal 让前端显示 "3/8 已完成"）。
+     */
+    protected void reportProgress(StepContext context, int progress, String message,
+                                  Integer itemDone, Integer itemTotal) {
         StepEnum step = getStep();
         int totalProgress = calculateTotalProgress(step, progress);
 
         context.setProgress(progress);
         context.setTotalProgress(totalProgress);
 
-        progressRecorder.record(context.getTaskId(), step.getOrder(), progress, totalProgress, message);
+        progressRecorder.record(context.getTaskId(), step.getOrder(), step.getName(),
+                progress, totalProgress, message, itemDone, itemTotal);
 
-        log.debug("进度上报：step={}, progress={}, totalProgress={}, taskId={}",
-                step.getCode(), progress, totalProgress, context.getTaskId());
+        log.debug("进度上报：step={}({}), progress={}, totalProgress={}, item={}/{}, taskId={}",
+                step.getCode(), step.getName(), progress, totalProgress,
+                itemDone == null ? "-" : itemDone,
+                itemTotal == null ? "-" : itemTotal,
+                context.getTaskId());
     }
 
     // ==================== AI 调用 ====================

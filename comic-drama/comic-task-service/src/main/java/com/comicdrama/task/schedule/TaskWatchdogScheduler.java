@@ -46,6 +46,10 @@ public class TaskWatchdogScheduler {
     @Value("${task.watchdog.check-interval-ms:120000}")
     private long checkIntervalMs;
 
+    /** 进度活跃判定阈值（分钟）：最近此时间内有进度更新则认为任务仍在执行，默认为超时阈值的 1/3 */
+    @Value("${task.watchdog.progress-active-minutes:0}")
+    private int progressActiveMinutes;
+
     /**
      * 定期检测卡死的 RUNNING 任务并标记为失败。
      */
@@ -89,9 +93,11 @@ public class TaskWatchdogScheduler {
 
         if (latestLog != null && latestLog.getCreateTime() != null) {
             long minutesSinceLastProgress = ChronoUnit.MINUTES.between(latestLog.getCreateTime(), now);
-            // 如果最近 10 分钟内有进度更新，认为任务仍在活跃执行，暂不标记超时
-            if (minutesSinceLastProgress < 10) {
-                log.info("【看门狗】任务 {} 最近 {} 分钟内有进度更新，跳过超时标记", taskId, minutesSinceLastProgress);
+            // 进度活跃判定阈值：配置值 > 0 时用配置，否则取超时阈值的 1/3
+            int activeThreshold = progressActiveMinutes > 0 ? progressActiveMinutes : Math.max(1, timeoutMinutes / 3);
+            if (minutesSinceLastProgress < activeThreshold) {
+                log.info("【看门狗】任务 {} 最近 {} 分钟内有进度更新（阈值 {} 分钟），跳过超时标记",
+                        taskId, minutesSinceLastProgress, activeThreshold);
                 return;
             }
         }

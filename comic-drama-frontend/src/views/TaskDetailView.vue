@@ -54,11 +54,36 @@
 
       <!-- 总体进度 -->
       <div class="progress-row">
+        <div class="progress-header">
+          <div class="progress-title">
+            <span v-if="statusLabel">{{ statusLabel }}</span>
+            <template v-else>
+              <span class="step-pos">{{ dispStep }}/9</span>
+              <span class="step-dot">·</span>
+              <span class="step-name">{{ dispStepName }}</span>
+              <template v-if="dispBatch">
+                <span class="step-dot">·</span>
+                <span class="step-batch">{{ dispBatch }}</span>
+              </template>
+              <template v-else-if="lastMessage">
+                <span class="step-dot">·</span>
+                <span class="step-msg">{{ lastMessage }}</span>
+              </template>
+            </template>
+            <span class="step-percent">{{ progressTotal }}%</span>
+          </div>
+          <div class="progress-channel">
+            <el-tag v-if="wsConnected" size="small" type="success" effect="plain" round>实时</el-tag>
+            <el-tag v-else-if="polling" size="small" type="warning" effect="plain" round>轮询中</el-tag>
+            <el-tag v-else size="small" effect="plain" round>就绪</el-tag>
+          </div>
+        </div>
         <el-progress
           :percentage="progressTotal"
           :stroke-width="10"
           :color="`var(${statusMeta(detail.status).colorVar})`"
           :status="progressStatus"
+          :text-inside="false"
         />
         <div class="time-row">
           <span>创建：{{ fmtTime(detail.createTime) }}</span>
@@ -663,21 +688,30 @@
         <div class="sketch-card side-card">
           <div class="card-head">
             <h3>实时进度</h3>
-            <span class="conn-dot" :class="{ ws: wsConnected, polling: polling }">
-              {{ wsConnected ? 'WebSocket' : polling ? '轮询中' : '空闲' }}
+            <span class="conn-dot" :class="connDotClass">
+              {{ connDotText }}
             </span>
           </div>
           <div ref="logBoxRef" class="log-box">
             <div
               v-for="log in progressLogs"
               :key="log.id || `${log.step}-${log.createTime}`"
-              class="log-line"
+              class="log-card"
+              :class="logCardClass(log)"
             >
-              <span class="log-time">{{ fmtTime(log.createTime) }}</span>
-              <span class="log-step">{{ log.stepName || `步骤${log.step}` }}</span>
-              <span class="log-msg">{{ log.message || `${log.progress}%` }}</span>
+              <div class="log-step-badge">{{ log.step ?? '·' }}</div>
+              <div class="log-body">
+                <div class="log-head">
+                  <span class="log-step-name">{{ log.stepName || `步骤${log.step}` }}</span>
+                  <span class="log-time">{{ fmtLogTime(log.createTime) }}</span>
+                </div>
+                <div class="log-msg">{{ log.message || `${log.progress}%` }}</div>
+              </div>
             </div>
-            <div v-if="!progressLogs?.length" class="log-empty">暂无进度</div>
+            <div v-if="!progressLogs?.length" class="log-empty">
+              <el-icon class="log-empty-icon"><Timer /></el-icon>
+              <span>等待进度更新…</span>
+            </div>
           </div>
         </div>
 
@@ -844,7 +878,7 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowDown, Warning, InfoFilled, Download, VideoPlay } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowDown, Warning, InfoFilled, Download, VideoPlay, Timer } from '@element-plus/icons-vue'
 import {
   getTaskDetail,
   getTaskFailureLogs,
@@ -1130,7 +1164,8 @@ const canManualEdit = computed(() => {
   return detail.value.execMode === 1 && detail.value.pendingReview
 })
 
-const { progressLogs, currentStep, totalProgress, status, wsConnected, polling, refresh, startPolling } =
+const { progressLogs, currentStep, totalProgress, status, wsConnected, polling, refresh, startPolling,
+  itemDone, itemTotal, stepName: liveStepName, lastMessage } =
   useTaskProgress(taskIdRef, {
     onStepCompleted: (_completedStep) => {
       loadDetail()
@@ -1158,6 +1193,45 @@ const progressStatus = computed<'' | 'success' | 'exception' | 'warning'>(() => 
   if (detail.value.status === TaskStatus.FAILED) return 'exception'
   if (detail.value.status === TaskStatus.PAUSED) return 'warning'
   return ''
+})
+
+/** 处于终态时显示的状态大标题（替代"步骤 N/9 · …"） */
+const statusLabel = computed<string | null>(() => {
+  const s = detail.value.status
+  if (s === TaskStatus.DONE) return '已完成'
+  if (s === TaskStatus.FAILED) return '生成失败'
+  if (s === TaskStatus.PAUSED) {
+    const mode1 = detail.value.execMode === 1 && detail.value.pendingReview
+    return mode1 ? '等待审核' : '已暂停'
+  }
+  if (s === TaskStatus.QUEUE) return '排队中'
+  return null
+})
+
+/** 当前步骤编号（1-9），用于显示 "步骤 X/9" */
+const dispStep = computed(() => {
+  if (currentStep.value > 0) return currentStep.value
+  if (detail.value.currentStep > 0) return detail.value.currentStep
+  return 1
+})
+
+/** 当前步骤中文名（优先"实时推送"，其次 detail.currentStep 的 stepName()，最后回退） */
+const dispStepName = computed(() => {
+  if (liveStepName.value && liveStepName.value !== '等待开始') return liveStepName.value
+  const s = dispStep.value
+  // 使用本地 stepName helper (constants/task 已 import)
+  return stepName(s)
+})
+
+/** 批量进度文案：更简洁直观，如 "已完成 2/8 · 25%" */
+const dispBatch = computed(() => {
+  const done = itemDone.value
+  const total = itemTotal.value
+  if (done == null || total == null || total <= 0) return ''
+  const pct = Math.round((done / total) * 100)
+  if (done >= total) return '已完成'
+  if (done <= 0) return `共 ${total} 项`
+  return `已完成 ${done}/${total} · ${pct}%`
 })
 
 const hasAnyProduct = computed(() => {
@@ -1325,6 +1399,50 @@ function nodeArtifactSummary(step?: number): string {
 function fmtTime(t?: string) {
   if (!t) return ''
   return t.replace('T', ' ').slice(0, 16)
+}
+
+/** 日志时间仅显示 HH:mm:ss，保持右栏紧凑 */
+function fmtLogTime(t?: string) {
+  if (!t) return ''
+  // 2024-01-02T03:04:05.000+00:00 → 取 T 后的时分秒
+  const iso = t.replace('T', ' ')
+  const match = iso.match(/(\d{2}:\d{2}:\d{2})/)
+  return match ? match[1] : iso.slice(11, 19) || ''
+}
+
+/** 实时进度通道标签 class + 文本：
+ *  - WS 连接 → 绿色"实时"
+ *  - 轮询中 → 橙色"轮询"
+ *  - 任务 RUNNING/QUEUE 但两者都没连 → 黄色"连接中"
+ *  - 非活跃状态 → 灰色"就绪"（避免"空闲"让人误以为没在工作）
+ */
+const connDotClass = computed(() => {
+  if (wsConnected.value) return 'ws'
+  if (polling.value) return 'polling'
+  const st = detail.value.status
+  if (st === TaskStatus.RUNNING || st === TaskStatus.QUEUE) return 'connecting'
+  return ''
+})
+const connDotText = computed(() => {
+  if (wsConnected.value) return '实时'
+  if (polling.value) return '轮询'
+  const st = detail.value.status
+  if (st === TaskStatus.RUNNING || st === TaskStatus.QUEUE) return '连接中'
+  return '就绪'
+})
+
+/** 单条日志卡片 class：根据 step 徽标颜色 + 状态色 */
+function logCardClass(log: any) {
+  const step = Number(log.step) || 0
+  const status = Number(log.status)
+  const cls: string[] = []
+  if (step >= 1 && step <= 9) cls.push(`log-step-${step}`)
+  if (status === 2) cls.push('log-done')
+  else if (status === 3) cls.push('log-fail')
+  else if (log.message?.includes('失败') || log.message?.includes('错误')) cls.push('log-fail')
+  else if (log.message?.includes('完成') && /\d\/\d/.test(log.message)) cls.push('log-progress')
+  else cls.push('log-running')
+  return cls
 }
 
 function artStyleLabel(value?: string): string {
@@ -1953,6 +2071,63 @@ loadDetail()
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--cd-text-primary);
+  font-weight: 500;
+  flex-wrap: wrap;
+}
+
+.progress-title .step-pos {
+  color: var(--cd-primary);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.progress-title .step-dot {
+  color: var(--cd-text-secondary);
+  opacity: 0.6;
+}
+
+.progress-title .step-name {
+  color: var(--cd-text-primary);
+}
+
+.progress-title .step-batch {
+  color: var(--cd-warning);
+  font-weight: 500;
+}
+
+.progress-title .step-msg {
+  color: var(--cd-text-secondary);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-title .step-percent {
+  margin-left: 8px;
+  color: var(--cd-text-primary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.progress-channel {
+  display: inline-flex;
+  align-items: center;
 }
 
 .time-row {
@@ -2685,38 +2860,122 @@ loadDetail()
   border-color: var(--cd-warning);
 }
 
-/* 进度日志 */
+.conn-dot.connecting {
+  background: var(--cd-warning, #e6a23c);
+  color: #fff;
+  border-color: var(--cd-warning, #e6a23c);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+/* 进度日志 —— 结构化卡片样式 */
 .log-box {
-  max-height: 260px;
+  max-height: 300px;
   overflow-y: auto;
-  padding: 8px 10px;
+  padding: 10px;
   background: var(--cd-bg-soft);
   border: 1px dashed var(--cd-border);
-  border-radius: 6px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   font-size: 12px;
-  font-family: Consolas, Monaco, monospace;
 }
-.log-line {
-  display: grid;
-  grid-template-columns: 92px 80px 1fr;
-  gap: 6px;
+.log-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--cd-bg-card);
+  border: 1px solid var(--cd-border);
+  border-left: 3px solid var(--cd-primary);
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+.log-card.log-running {
+  border-left-color: var(--cd-primary);
+}
+.log-card.log-progress {
+  border-left-color: var(--cd-warning);
+}
+.log-card.log-done {
+  border-left-color: var(--cd-success, #67c23a);
+  background: rgba(103, 194, 58, 0.05);
+}
+.log-card.log-fail {
+  border-left-color: var(--cd-danger, #f56c6c);
+  background: rgba(245, 108, 108, 0.06);
+}
+/* 步骤号徽标 —— 按 9 步给不同柔和色（马卡龙色调） */
+.log-step-badge {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--cd-primary);
+}
+.log-card.log-step-1 .log-step-badge { background: #F7A8B8; } /* 粉 */
+.log-card.log-step-2 .log-step-badge { background: #FFB7A0; } /* 橙 */
+.log-card.log-step-3 .log-step-badge { background: #FFD7A0; } /* 杏 */
+.log-card.log-step-4 .log-step-badge { background: #F0E68C; color: #8b7e00; } /* 柠 */
+.log-card.log-step-5 .log-step-badge { background: #B6E2A1; } /* 草 */
+.log-card.log-step-6 .log-step-badge { background: #A3D8D6; color: #2c7a78; } /* 青 */
+.log-card.log-step-7 .log-step-badge { background: #A8C5F0; } /* 蓝 */
+.log-card.log-step-8 .log-step-badge { background: #C9B6E4; } /* 紫 */
+.log-card.log-step-9 .log-step-badge { background: #E0B6E4; } /* 藕 */
+
+.log-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.log-step-name {
+  font-weight: 600;
   color: var(--cd-text);
-  line-height: 1.5;
+  font-size: 12px;
 }
 .log-time {
+  font-size: 11px;
   color: var(--cd-text-secondary);
+  font-family: Consolas, Monaco, monospace;
+  flex-shrink: 0;
 }
-.log-step {
-  color: var(--cd-primary);
-  font-weight: 600;
+.log-msg {
+  color: var(--cd-text-secondary);
+  line-height: 1.5;
+  font-size: 12px;
+  word-break: break-word;
+}
+.log-card.log-fail .log-msg {
+  color: var(--cd-danger, #f56c6c);
+  font-weight: 500;
 }
 .log-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   color: var(--cd-text-secondary);
   text-align: center;
-  padding: 12px 0;
+  padding: 20px 0;
+  font-size: 12px;
+}
+.log-empty-icon {
+  font-size: 20px;
+  opacity: 0.6;
 }
 
 /* 失败摘要条 */
