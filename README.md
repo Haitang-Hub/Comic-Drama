@@ -287,7 +287,7 @@ SOURCE comic-drama/sql/comic_drama.sql;
   <sub>人工审核模式 · 逐阶段把关</sub>
 </p>
 
-更多截图详见 [docs/images/](docs/images/)。
+更多截图详见 [图片资源文件](docs/images/)。
 
 ---
 
