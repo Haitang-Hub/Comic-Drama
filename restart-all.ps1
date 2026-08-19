@@ -3,7 +3,7 @@
   Comic Drama AI - Restart All Services
 .DESCRIPTION
   Stop all running services, optionally rebuild backend, then start in order:
-    Eureka -> Auth/System/Task/Workflow/Resource -> Gateway -> Frontend -> Mock
+    Task -> Workflow -> Resource -> Gateway -> Frontend -> Mock
 .PARAMETER SkipBuild
   Skip Maven build
 .PARAMETER SkipMock
@@ -25,9 +25,6 @@ $FrontendRoot = Join-Path $RepoRoot 'comic-drama-frontend'
 $WINDOW_PREFIX = 'ComicDrama'
 
 $services = @(
-  @{ Name = 'comic-eureka';           Title = 'Eureka';   Port = 8761 }
-  @{ Name = 'comic-auth-service';     Title = 'Auth';     Port = 8101 }
-  @{ Name = 'comic-system-service';   Title = 'System';   Port = 8102 }
   @{ Name = 'comic-task-service';     Title = 'Task';     Port = 8103 }
   @{ Name = 'comic-workflow-service'; Title = 'Workflow'; Port = 8104 }
   @{ Name = 'comic-resource-service'; Title = 'Resource'; Port = 8105 }
@@ -156,12 +153,7 @@ foreach ($svc in $services) {
   }
   Write-Host "  [START] $($svc.Name) ($($svc.Title)) :$($svc.Port)" -ForegroundColor Green
   Start-CmdWindow -Title $svc.Title -WorkDir $BackendRoot -Cmd "java -jar `"$($jar.FullName)`""
-  if ($svc.Name -eq 'comic-eureka') {
-    Write-W2 'Wait Eureka ready (15s)...'
-    Start-Sleep -Seconds 15
-  } else {
-    Start-Sleep -Seconds 3
-  }
+  Start-Sleep -Seconds 3
 }
 Write-OK 'Backend services started'
 
@@ -190,7 +182,6 @@ if (-not $SkipMock) {
 }
 
 Write-Step 'Wait for key services'
-Wait-Port-Ready 8761 'Eureka' 90 | Out-Null
 Wait-Port-Ready 8070 'Gateway' 90 | Out-Null
 Wait-Port-Ready $frontendPort 'Frontend' 90 | Out-Null
 
@@ -199,7 +190,6 @@ Write-Host "  All services started!" -ForegroundColor Green
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "  Frontend:      http://127.0.0.1:$frontendPort" -ForegroundColor White
 Write-Host "  Gateway API:   http://127.0.0.1:8070" -ForegroundColor White
-Write-Host "  Eureka:        http://127.0.0.1:8761" -ForegroundColor White
 if (-not $SkipMock) {
   Write-Host "  Mock model:    http://127.0.0.1:$mockPort" -ForegroundColor White
 }

@@ -157,7 +157,7 @@ public class AgnesVideoInvoker implements AiModelInvoker {
         // 提交前打印摘要（图片 Base64 非常长，禁止打印完整 body，只打印摘要）
         logSummarizeBody(context, request, body);
 
-        String submitUrl = context.getApiUrl() + "/v1/videos";
+        String submitUrl = stripTrailingSlash(context.getApiUrl()) + "/videos";
         int queueRetryCount = 0;
         int normalRetryCount = 0;
         int maxNormalAttempts = retryTimes + 1;
@@ -684,6 +684,11 @@ public class AgnesVideoInvoker implements AiModelInvoker {
     }
 
     // ==================== 工具方法 ====================
+
+    /** 去除末尾斜杠，避免拼接路径时出现双重斜杠（如 https://host/v1/ + /videos → https://host/v1/videos） */
+    private static String stripTrailingSlash(String url) {
+        return url != null && url.length() > 1 && url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    }
 
     /** 解析查询地址：优先 extra.queryUrl，否则用 apiUrl 域下 /agnesapi */
     private String resolveQueryUrl(AiModelContext context, AiInvokeRequest request) {

@@ -10,7 +10,7 @@ export interface UserProfileVO {
   gender?: number
   status?: number
   createTime?: string
-  roleNames?: string[]
+  role?: string
 }
 
 export interface UserProfileUpdateDTO {

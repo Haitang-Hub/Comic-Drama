@@ -16,7 +16,6 @@ public final class SecurityConstants {
             "/auth/login",
             "/auth/register",
             "/actuator/**",
-            "/eureka/**",
             "/favicon.ico",
             "/doc.html",
             "/swagger-ui/**",

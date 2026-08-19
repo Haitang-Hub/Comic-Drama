@@ -10,7 +10,7 @@ export interface AdminUserVO {
   phone?: string
   gender?: number
   status?: number
-  roleNames?: string[]
+  role?: string
   createTime?: string
 }
 
@@ -29,7 +29,7 @@ export interface AdminUserCreateDTO {
   email?: string
   phone?: string
   gender?: number
-  roleNames?: string[]
+  role?: string
 }
 
 export interface AdminUserUpdateDTO {
@@ -38,7 +38,7 @@ export interface AdminUserUpdateDTO {
   email?: string
   phone?: string
   gender?: number
-  roleNames?: string[]
+  role?: string
   status?: number
 }
 
@@ -65,25 +65,6 @@ export interface SystemStatsVO {
   workTotal: number
   todayNewUsers: number
   todayNewTasks: number
-}
-
-export interface OperationLogVO {
-  id: number
-  userId?: number
-  username?: string
-  operationType: string
-  operationDesc?: string
-  ip?: string
-  duration?: number
-  status?: number
-  createTime?: string
-}
-
-export interface OperationLogPageQuery {
-  page?: number
-  size?: number
-  module?: string
-  username?: string
 }
 
 export function pageUsers(params: AdminUserPageQuery) {
@@ -118,10 +99,6 @@ export function resetUserPassword(id: number, newPassword: string) {
   return request.put<any, void>(`/api/sys/user/${id}/password`, null, { params: { newPassword } })
 }
 
-export function grantUserRoles(id: number, roleIds: number[]) {
-  return request.put<any, void>(`/api/sys/user/${id}/roles`, roleIds)
-}
-
 export function getSystemConfigs() {
   return request.get<any, SystemConfigVO[]>('/api/system/config/list')
 }
@@ -132,10 +109,6 @@ export function updateSystemConfig(data: SystemConfigVO) {
 
 export function getSystemStats() {
   return request.get<any, SystemStatsVO>('/api/admin/stats')
-}
-
-export function pageOperationLogs(params: OperationLogPageQuery) {
-  return request.get<any, PageResult<OperationLogVO>>('/api/operation-log/page', { params })
 }
 
 // ===== 模型配置 =====
@@ -391,19 +364,3 @@ export const listStepBindings = () => request.get('/api/admin/step-binding/list'
 export const getStepBinding = (id: number) => request.get(`/api/admin/step-binding/${id}`)
 export const updateStepBinding = (id: number, data: any) => request.put(`/api/admin/step-binding/${id}`, data)
 export const batchUpdateStepBindings = (data: any) => request.put('/api/admin/step-binding/batch', data)
-
-// ---- 角色管理 ----
-export const listRoles = (params: any) => request.get('/api/sys/role/list', { params })
-export const getRole = (id: number) => request.get(`/api/sys/role/${id}`)
-export const createRole = (data: any) => request.post('/api/sys/role', data)
-export const updateRole = (data: any) => request.put('/api/sys/role', data)
-export const deleteRole = (id: number) => request.delete(`/api/sys/role/${id}`)
-export const listRolePermissions = (id: number) => request.get(`/api/sys/role/${id}/permissions`)
-export const updateRolePermissions = (id: number, permissionIds: number[]) => request.put(`/api/sys/role/${id}/permissions`, permissionIds)
-
-// ---- 权限管理 ----
-export const listPermissions = (params: any) => request.get('/api/sys/permission/list', { params })
-export const getPermission = (id: number) => request.get(`/api/sys/permission/${id}`)
-export const createPermission = (data: any) => request.post('/api/sys/permission', data)
-export const updatePermission = (data: any) => request.put('/api/sys/permission', data)
-export const deletePermission = (id: number) => request.delete(`/api/sys/permission/${id}`)

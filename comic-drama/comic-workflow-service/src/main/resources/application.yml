@@ -21,13 +21,6 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
 
-eureka:
-  client:
-    service-url:
-      defaultZone: http://127.0.0.1:8761/eureka/
-  instance:
-    prefer-ip-address: true
-
 sa-token:
   token-name: Authorization
   token-prefix: Bearer

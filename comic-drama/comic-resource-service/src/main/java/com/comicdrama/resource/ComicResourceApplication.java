@@ -3,6 +3,7 @@ package com.comicdrama.resource;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 资源服务：文件上传/签名URL + 作品管理。
@@ -10,6 +11,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  */
 @SpringBootApplication(scanBasePackages = "com.comicdrama")
 @MapperScan("com.comicdrama.resource.mapper")
+@EnableScheduling
 public class ComicResourceApplication {
 
     public static void main(String[] args) {

@@ -761,26 +761,42 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         if (task == null) {
             throw new BizException(ResultCode.TASK_NOT_FOUND);
         }
-        if (task.getStatus() == null || task.getStatus() != TaskStatus.FAILED.getCode()) {
-            throw new BizException(ResultCode.TASK_STATUS_ILLEGAL, "仅失败任务可重试");
+        Integer st = task.getStatus();
+        boolean isFailed = st != null && st == TaskStatus.FAILED.getCode();
+        boolean isQueued = st != null && st == TaskStatus.QUEUE.getCode();
+        boolean isPaused = st != null && st == TaskStatus.PAUSED.getCode();
+        boolean inMemory = taskQueue.getPosition(id) > 0;
+
+        if (!isFailed && !isQueued && !isPaused) {
+            throw new BizException(ResultCode.TASK_STATUS_ILLEGAL, "仅失败/排队/暂停任务可重试");
         }
+
+        // 失败任务正常走重试流程；排队/暂停但内存队列中不存在任务（服务重启导致内存队列丢队），
+        // 重新入队但不将 status 重置为 FAILED 语义（不修改失败步骤相关字段）。
         TaskQueueEntry entry = TaskQueueEntry.builder()
                 .taskId(id)
                 .userId(task.getUserId())
                 .priority(100)
                 .enqueuedTime(LocalDateTime.now())
                 .build();
-        taskQueue.enqueue(entry);
+        if (!inMemory) {
+            taskQueue.enqueue(entry);
+        }
         int position = taskQueue.getPosition(id);
         ComicTask update = new ComicTask();
         update.setId(id);
-        update.setStatus(TaskStatus.QUEUE.getCode());
+        if (isFailed) {
+            update.setStatus(TaskStatus.QUEUE.getCode());
+            update.setRetryCount((task.getRetryCount() == null ? 0 : task.getRetryCount()) + 1);
+        }
         update.setQueuePosition(position);
-        update.setRetryCount((task.getRetryCount() == null ? 0 : task.getRetryCount()) + 1);
-        // 保留 failureStep，供 TaskPipelineRunner 判断从失败步骤续跑（而非从头执行）
         this.updateById(update);
         writeProgressLog(id, 0, null, null, 0, 0,
-                "任务重试，从失败步骤续跑（步骤 " + task.getFailureStep() + "），排队位置 " + position);
+                isFailed
+                        ? "任务重试，从失败步骤续跑（步骤 " + task.getFailureStep() + "），排队位置 " + position
+                        : inMemory
+                                ? "任务重新入队（已在队列中），排队位置 " + position
+                                : "任务重新入队（服务重启导致丢队已修复），排队位置 " + position);
     }
 
     @Override

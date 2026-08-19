@@ -14,10 +14,7 @@
 
     <modules>
         <module>comic-common</module>
-        <module>comic-eureka</module>
         <module>comic-gateway</module>
-        <module>comic-auth-service</module>
-        <module>comic-system-service</module>
         <module>comic-workflow-service</module>
         <module>comic-task-service</module>
         <module>comic-resource-service</module>

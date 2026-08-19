@@ -147,64 +147,6 @@ services:
         limits:
           memory: 512m
 
-  comic-auth-service:
-    build:
-      context: ../
-      dockerfile: docker/Dockerfile
-      args:
-        SERVICE: comic-auth-service
-    container_name: comic-auth-service
-    environment:
-      SPRING_PROFILES_ACTIVE: docker
-      NACOS_SERVER_ADDR: nacos:8848
-      MYSQL_URL: jdbc:mysql://mysql:3306/comic_drama?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
-      MYSQL_USERNAME: ${MYSQL_USER:comic}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:comic_drama_2026}
-      REDIS_URL: redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:comic_redis_2026}
-    networks:
-      - comic-net
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      nacos:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-
-  comic-system-service:
-    build:
-      context: ../
-      dockerfile: docker/Dockerfile
-      args:
-        SERVICE: comic-system-service
-    container_name: comic-system-service
-    environment:
-      SPRING_PROFILES_ACTIVE: docker
-      NACOS_SERVER_ADDR: nacos:8848
-      MYSQL_URL: jdbc:mysql://mysql:3306/comic_drama?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
-      MYSQL_USERNAME: ${MYSQL_USER:comic}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:comic_drama_2026}
-      REDIS_URL: redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:comic_redis_2026}
-    networks:
-      - comic-net
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      nacos:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-
   comic-task-service:
     build:
       context: ../

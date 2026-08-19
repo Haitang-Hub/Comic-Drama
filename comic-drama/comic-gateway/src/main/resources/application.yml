@@ -10,33 +10,18 @@ spring:
         locator:
           enabled: false
       routes:
-        - id: auth-service
-          uri: http://127.0.0.1:8101
-          predicates:
-            - Path=/auth/**,/api/sys/**
-        - id: system-service
-          uri: http://127.0.0.1:8102
-          predicates:
-            - Path=/api/system/**,/api/template/**,/api/operation-log/**,/api/statistics/**
         - id: task-service
           uri: http://127.0.0.1:8103
           predicates:
-            - Path=/api/task/**,/api/queue/**,/api/progress/**,/api/failure/**,/api/node-state/**
+            - Path=/auth/**,/api/sys/**,/avatars/**,/api/task/**,/api/queue/**,/api/progress/**,/api/failure/**,/api/node-state/**,/api/statistics/**
         - id: workflow-service
           uri: http://127.0.0.1:8104
           predicates:
-            - Path=/api/workflow/**,/api/admin/**
+            - Path=/api/workflow/**,/api/admin/**,/api/system/**,/api/template/**
         - id: resource-service
           uri: http://127.0.0.1:8105
           predicates:
             - Path=/api/resource/**,/api/work/**,/static/**
-
-eureka:
-  client:
-    service-url:
-      defaultZone: http://127.0.0.1:8761/eureka/
-  instance:
-    prefer-ip-address: true
 
 sa-token:
   token-name: Authorization

@@ -9,8 +9,9 @@ import java.util.Map;
 /**
  * 工作流服务 Feign 客户端
  * 用于调用 comic-workflow-service 的 API
+ * 使用配置文件中的 URL 直连，不依赖 Eureka/LoadBalancer
  */
-@FeignClient(name = "comic-workflow-service", path = "/api/workflow/pipeline")
+@FeignClient(name = "comic-workflow-service", url = "${workflow.service.url:http://127.0.0.1:8104}", path = "/api/workflow/pipeline")
 public interface WorkflowClient {
 
     /**

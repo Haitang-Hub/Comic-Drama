@@ -14,7 +14,7 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- =============================================================================
--- 模块一：系统权限（用户 / 角色 / 权限）
+-- 模块一：系统权限（用户）
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -30,6 +30,7 @@ CREATE TABLE `sys_user` (
   `phone`          VARCHAR(20)           DEFAULT NULL            COMMENT '手机号',
   `gender`         TINYINT               DEFAULT 0               COMMENT '性别：0未知 1男 2女',
   `status`         TINYINT               DEFAULT 1               COMMENT '账号状态：0禁用 1启用',
+  `role`           VARCHAR(32)   NOT NULL DEFAULT 'USER'         COMMENT '角色：ADMIN/USER',
   `last_login_time` DATETIME             DEFAULT NULL            COMMENT '最后登录时间',
   `last_login_ip`  VARCHAR(64)           DEFAULT NULL            COMMENT '最后登录IP',
   `remark`         VARCHAR(255)          DEFAULT NULL            COMMENT '备注',
@@ -41,71 +42,6 @@ CREATE TABLE `sys_user` (
   KEY `idx_status` (`status`),
   KEY `idx_create_time` (`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户表';
-
--- -----------------------------------------------------------------------------
--- 2. 角色表
--- -----------------------------------------------------------------------------
-CREATE TABLE `sys_role` (
-  `id`          BIGINT      NOT NULL AUTO_INCREMENT              COMMENT '主键ID',
-  `role_code`   VARCHAR(64) NOT NULL                             COMMENT '角色编码（如 ADMIN/USER）',
-  `role_name`   VARCHAR(64) NOT NULL                             COMMENT '角色名称',
-  `description` VARCHAR(255)         DEFAULT NULL                COMMENT '角色描述',
-  `sort`        INT                  DEFAULT 0                   COMMENT '排序号',
-  `status`      TINYINT              DEFAULT 1                   COMMENT '状态：0禁用 1启用',
-  `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP   COMMENT '创建时间',
-  `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `deleted`     TINYINT              DEFAULT 0                   COMMENT '逻辑删除：0未删 1已删',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_role_code` (`role_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='角色表';
-
--- -----------------------------------------------------------------------------
--- 3. 权限表
--- -----------------------------------------------------------------------------
-CREATE TABLE `sys_permission` (
-  `id`            BIGINT      NOT NULL AUTO_INCREMENT            COMMENT '主键ID',
-  `parent_id`     BIGINT               DEFAULT 0                 COMMENT '父权限ID（0为顶级）',
-  `perm_code`     VARCHAR(128) NOT NULL                          COMMENT '权限编码',
-  `perm_name`     VARCHAR(64) NOT NULL                           COMMENT '权限名称',
-  `perm_type`     TINYINT              DEFAULT 1                 COMMENT '类型：1菜单 2按钮 3接口',
-  `path`          VARCHAR(255)         DEFAULT NULL              COMMENT '前端路由路径',
-  `component`     VARCHAR(255)         DEFAULT NULL              COMMENT '前端组件路径',
-  `icon`          VARCHAR(64)          DEFAULT NULL              COMMENT '菜单图标',
-  `sort`          INT                  DEFAULT 0                 COMMENT '排序号',
-  `status`        TINYINT              DEFAULT 1                 COMMENT '状态：0禁用 1启用',
-  `create_time`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_time`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  `deleted`       TINYINT              DEFAULT 0                 COMMENT '逻辑删除：0未删 1已删',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_perm_code` (`perm_code`),
-  KEY `idx_parent_id` (`parent_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='权限表';
-
--- -----------------------------------------------------------------------------
--- 4. 用户-角色关联表
--- -----------------------------------------------------------------------------
-CREATE TABLE `sys_user_role` (
-  `id`          BIGINT   NOT NULL AUTO_INCREMENT                 COMMENT '主键ID',
-  `user_id`     BIGINT   NOT NULL                                COMMENT '用户ID',
-  `role_id`     BIGINT   NOT NULL                                COMMENT '角色ID',
-  `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP      COMMENT '创建时间',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_user_role` (`user_id`, `role_id`),
-  KEY `idx_role_id` (`role_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户-角色关联表';
-
--- -----------------------------------------------------------------------------
--- 5. 角色-权限关联表
--- -----------------------------------------------------------------------------
-CREATE TABLE `sys_role_permission` (
-  `id`            BIGINT   NOT NULL AUTO_INCREMENT               COMMENT '主键ID',
-  `role_id`       BIGINT   NOT NULL                              COMMENT '角色ID',
-  `permission_id` BIGINT   NOT NULL                              COMMENT '权限ID',
-  `create_time`   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_role_perm` (`role_id`, `permission_id`),
-  KEY `idx_permission_id` (`permission_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='角色-权限关联表';
 
 
 -- =============================================================================
@@ -683,33 +619,7 @@ CREATE TABLE `resource_cleanup_log` (
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- 27. 操作日志表
--- -----------------------------------------------------------------------------
-CREATE TABLE `operation_log` (
-  `id`            BIGINT       NOT NULL AUTO_INCREMENT             COMMENT '主键ID',
-  `user_id`       BIGINT                DEFAULT NULL               COMMENT '操作人ID',
-  `username`      VARCHAR(64)           DEFAULT NULL               COMMENT '操作人用户名',
-  `module`        VARCHAR(64)           DEFAULT NULL               COMMENT '功能模块',
-  `business_type` VARCHAR(32)           DEFAULT NULL               COMMENT '业务类型',
-  `method`        VARCHAR(255)          DEFAULT NULL               COMMENT '请求方法',
-  `request_url`   VARCHAR(512)          DEFAULT NULL               COMMENT '请求URL',
-  `request_method` VARCHAR(10)          DEFAULT NULL               COMMENT 'HTTP方法',
-  `request_param` LONGTEXT              DEFAULT NULL               COMMENT '请求参数',
-  `response_data` LONGTEXT              DEFAULT NULL               COMMENT '返回结果',
-  `ip`            VARCHAR(64)           DEFAULT NULL               COMMENT '操作IP',
-  `location`      VARCHAR(128)          DEFAULT NULL               COMMENT '操作地点',
-  `status`        TINYINT               DEFAULT 1                  COMMENT '操作状态：0失败 1成功',
-  `error_msg`     VARCHAR(1024)         DEFAULT NULL               COMMENT '错误信息',
-  `cost_time`     INT                   DEFAULT 0                  COMMENT '耗时（毫秒）',
-  `create_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP  COMMENT '操作时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_user_id` (`user_id`),
-  KEY `idx_module` (`module`),
-  KEY `idx_create_time` (`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='操作日志表';
-
--- -----------------------------------------------------------------------------
--- 28. 任务统计表
+-- 27. 任务统计表
 -- -----------------------------------------------------------------------------
 CREATE TABLE `task_statistics_daily` (
   `id`                  BIGINT   NOT NULL AUTO_INCREMENT             COMMENT '主键ID',
@@ -751,6 +661,11 @@ CREATE TABLE `token_usage_log` (
   `node_type`         VARCHAR(32)           DEFAULT NULL            COMMENT '节点类型',
   `model_name`        VARCHAR(64)  NOT NULL                        COMMENT '调用模型名称',
   `model_type`        TINYINT               DEFAULT NULL            COMMENT '模型类型：1文本 2图像 3音频 4视频',
+  `prompt_tokens`     INT                   DEFAULT 0               COMMENT '提示词Token数',
+  `completion_tokens` INT                   DEFAULT 0               COMMENT '生成Token数',
+  `total_tokens`      INT                   DEFAULT 0               COMMENT '总Token数',
+  `image_count`       INT                   DEFAULT 0               COMMENT '生成图片数量',
+  `video_duration`    DECIMAL(10,2)         DEFAULT NULL            COMMENT '生成视频时长（秒）',
   `latency_ms`        INT                   DEFAULT 0               COMMENT '调用耗时（毫秒）',
   `status`            TINYINT               DEFAULT 1               COMMENT '状态：0失败 1成功',
   `error_msg`         VARCHAR(512)          DEFAULT NULL            COMMENT '错误信息',
@@ -770,18 +685,10 @@ CREATE TABLE `token_usage_log` (
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- 9.1 系统权限初始数据
+-- 9.1 系统初始账号
 -- -----------------------------------------------------------------------------
-INSERT INTO `sys_role` (`role_code`, `role_name`, `description`) VALUES
-('ADMIN', '系统管理员', '拥有全部权限'),
-('USER',  '普通用户',   '可创建漫剧任务、管理自己的作品');
-
-INSERT INTO `sys_user` (`username`, `password`, `nickname`, `status`) VALUES
-('admin', '$2a$10$RvWn/OTXbSPZMqZ7JedcXO4mfHHtIoBpzw/uQLfxaqHCqaRLyTPK.', '系统管理员', 1);
-
-INSERT INTO `sys_user_role` (`user_id`, `role_id`)
-SELECT u.id, r.id FROM `sys_user` u, `sys_role` r
-WHERE u.username='admin' AND r.role_code='ADMIN';
+INSERT INTO `sys_user` (`username`, `password`, `nickname`, `status`, `role`) VALUES
+('admin', '$2a$10$RvWn/OTXbSPZMqZ7JedcXO4mfHHtIoBpzw/uQLfxaqHCqaRLyTPK.', '系统管理员', 1, 'ADMIN');
 
 -- -----------------------------------------------------------------------------
 -- 9.2 AI模型配置初始数据
@@ -801,7 +708,7 @@ INSERT INTO `ai_model_config` (`model_provider`, `model_name`, `model_type`, `pr
 ('seed_tts', 'Seed-TTS 语音模型', 3, 'ark-tts', '["MULTI_VOICE"]', 'https://ark.cn-beijing.volces.com/api/v3', 'yourkey', 0),
 ('modelscope', 'black-forest-labs/FLUX.2-klein-9B', 2, 'modelscope-image', '["IMAGE_TO_IMAGE"]', 'https://api-inference.modelscope.cn/v1', 'yourkey', 1),
 ('mock', 'mock-test-text', 1, 'openai-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'http://127.0.0.1:9876/v1', 'mock-test-key-12345', 1),
-('agnes_video', 'agnes-video-v2.0', 4, 'agnes-video', '["FIRST_FRAME_LOCK"]', 'https://apihub.agnes-ai.com', 'yourkey', 1);
+('agnes_video', 'agnes-video-v2.0', 4, 'agnes-video', '["FIRST_FRAME_LOCK"]', 'https://apihub.agnes-ai.com/v1', 'yourkey', 1);
 
 -- -----------------------------------------------------------------------------
 -- 9.3 步骤-模型绑定初始数据（8步工作流，步骤拆分后顺序如下）
@@ -893,9 +800,9 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 -- =============================================================================
 -- 脚本执行完毕
--- 共 29 张表 + 初始化数据
+-- 共 25 张表 + 初始化数据
 -- 模块结构：
---   模块一：系统权限（1-5）      sys_user / sys_role / sys_permission / sys_user_role / sys_role_permission
+--   模块一：系统权限（1）         sys_user
 --   模块二：AI模型与配置（6-8）   ai_model_config / system_config / step_model_binding
 --   模块三：Prompt工程（9-10）    prompt_template / prompt_template_version
 --   模块四：任务核心（11-15）     comic_task / task_queue / task_progress_log / task_failure_log / task_node_state

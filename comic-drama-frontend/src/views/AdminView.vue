@@ -69,15 +69,13 @@
             <el-table-column label="角色" width="140">
               <template #default="{ row }">
                 <el-tag
-                  v-for="r in row.roleNames"
-                  :key="r"
-                  :type="r === 'ADMIN' ? 'warning' : 'success'"
+                  :type="row.role === 'ADMIN' ? 'warning' : 'success'"
                   effect="plain"
                   round
                   size="small"
                   class="role-tag"
                 >
-                  {{ r === 'ADMIN' ? '管理员' : r === 'USER' ? '普通用户' : r }}
+                  {{ row.role === 'ADMIN' ? '管理员' : '普通用户' }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -186,81 +184,6 @@
             <div class="config-actions">
               <button class="sketch-btn" @click="savePlatformConfigs">保存配置</button>
             </div>
-          </div>
-        </div>
-      </el-tab-pane>
-
-      <!-- 操作日志 -->
-      <el-tab-pane label="操作日志" name="logs">
-        <div class="filter-bar sketch-card">
-          <div class="filter-left">
-            <el-input
-              v-model="logQuery.module"
-              placeholder="搜索模块"
-              :prefix-icon="Search"
-              clearable
-              class="search-input"
-              @keyup.enter="loadLogs"
-              @clear="loadLogs"
-            />
-            <el-input
-              v-model="logQuery.username"
-              placeholder="搜索操作人"
-              :prefix-icon="Search"
-              clearable
-              class="search-input"
-              @keyup.enter="loadLogs"
-              @clear="loadLogs"
-            />
-          </div>
-        </div>
-
-        <div class="table-card sketch-card" v-loading="logLoading">
-          <el-table :data="logList" style="width: 100%" row-key="id">
-            <el-table-column label="时间" width="160">
-              <template #default="{ row }">{{ fmtTime(row.createTime) }}</template>
-            </el-table-column>
-            <el-table-column label="操作人" width="120">
-              <template #default="{ row }">{{ row.username || '系统' }}</template>
-            </el-table-column>
-            <el-table-column label="类型" width="120">
-              <template #default="{ row }">
-                <el-tag :type="logTagType(row.operationType)" effect="light" round size="small">
-                  {{ row.operationType }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="描述" min-width="200">
-              <template #default="{ row }">{{ row.operationDesc || '-' }}</template>
-            </el-table-column>
-            <el-table-column label="IP" width="140">
-              <template #default="{ row }">{{ row.ip || '-' }}</template>
-            </el-table-column>
-            <el-table-column label="状态" width="80" align="center">
-              <template #default="{ row }">
-                <el-tag
-                  :type="row.status === 1 ? 'success' : 'danger'"
-                  effect="plain"
-                  round
-                  size="small"
-                >
-                  {{ row.status === 1 ? '成功' : '失败' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-          </el-table>
-
-          <div class="pagination">
-            <el-pagination
-              v-model:current-page="logQuery.page"
-              v-model:page-size="logQuery.size"
-              :total="logTotal"
-              :page-sizes="[20, 50, 100]"
-              layout="total, sizes, prev, pager, next, jumper"
-              background
-              @current-change="loadLogs"
-              @size-change="handleLogSizeChange"
-            />
           </div>
         </div>
       </el-tab-pane>
@@ -560,11 +483,6 @@
         </div>
       </el-tab-pane>
 
-      <!-- 角色权限 -->
-      <el-tab-pane label="角色权限" name="rolePermission">
-        <RolePermissionView />
-      </el-tab-pane>
-
       <!-- 资源中心 -->
       <el-tab-pane label="资源中心" name="resourceCenter">
         <ResourceCenterView />
@@ -612,10 +530,10 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="角色">
-          <el-checkbox-group v-model="userForm.roleNames">
-            <el-checkbox value="USER">普通用户</el-checkbox>
-            <el-checkbox value="ADMIN">管理员</el-checkbox>
-          </el-checkbox-group>
+          <el-radio-group v-model="userForm.role">
+            <el-radio value="USER">普通用户</el-radio>
+            <el-radio value="ADMIN">管理员</el-radio>
+          </el-radio-group>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -840,7 +758,6 @@ import {
   enableUser,
   disableUser,
   getSystemStats,
-  pageOperationLogs,
   pageModels,
   createModel,
   updateModel,
@@ -870,8 +787,6 @@ import {
   type AdminUserCreateDTO,
   type AdminUserUpdateDTO,
   type SystemStatsVO,
-  type OperationLogVO,
-  type OperationLogPageQuery,
   type AiModelConfigVO,
   type AiModelConfigPageQuery,
   type ModelProtocolVO,
@@ -884,7 +799,6 @@ import {
   type TokenUsageLogPageQuery
 } from '@/api/admin'
 import { Doodles } from '@/components/illustrations'
-import RolePermissionView from './admin/RolePermissionView.vue'
 import ResourceCenterView from './admin/ResourceCenterView.vue'
 import SystemMonitorView from './admin/SystemMonitorView.vue'
 
@@ -954,7 +868,7 @@ const userForm = reactive<AdminUserCreateDTO & AdminUserUpdateDTO>({
   email: '',
   phone: '',
   gender: 0,
-  roleNames: ['USER']
+  role: 'USER'
 })
 const userFormRules: FormRules = {
   username: [
@@ -977,7 +891,7 @@ function openCreateUser() {
     email: '',
     phone: '',
     gender: 0,
-    roleNames: ['USER']
+    role: 'USER'
   })
   userDialogVisible.value = true
 }
@@ -991,7 +905,7 @@ function openEditUser(row: AdminUserVO) {
     email: row.email || '',
     phone: row.phone || '',
     gender: row.gender || 0,
-    roleNames: row.roleNames || ['USER']
+    role: row.role || 'USER'
   })
   userDialogVisible.value = true
 }
@@ -1008,7 +922,7 @@ async function handleSubmitUser() {
           email: userForm.email,
           phone: userForm.phone,
           gender: userForm.gender,
-          roleNames: userForm.roleNames
+          role: userForm.role
         }
         await updateUser(editingUser.value.id, dto)
         ElMessage.success('用户信息已更新')
@@ -1020,7 +934,7 @@ async function handleSubmitUser() {
           email: userForm.email,
           phone: userForm.phone,
           gender: userForm.gender,
-          roleNames: userForm.roleNames
+          role: userForm.role
         }
         await createUser(dto)
         ElMessage.success('用户创建成功')
@@ -1305,46 +1219,6 @@ async function handleClearTasks() {
 
 async function handleResetConfig() {
   // 已移除：危险操作功能已禁用
-}
-
-// ===== 操作日志 =====
-const logLoading = ref(false)
-const logList = ref<OperationLogVO[]>([])
-const logTotal = ref(0)
-const logQuery = reactive<OperationLogPageQuery>({
-  page: 1,
-  size: 20,
-  module: '',
-  username: ''
-})
-
-async function loadLogs() {
-  logLoading.value = true
-  try {
-    const res = await pageOperationLogs(logQuery)
-    logList.value = res.records || []
-    logTotal.value = res.total || 0
-  } catch (e) {
-    /* 拦截器已提示 */
-  } finally {
-    logLoading.value = false
-  }
-}
-
-function handleLogSizeChange() {
-  logQuery.page = 1
-  loadLogs()
-}
-
-function logTagType(type: string): 'primary' | 'info' | 'success' | 'warning' | 'danger' {
-  const map: Record<string, 'primary' | 'info' | 'success' | 'warning' | 'danger'> = {
-    LOGIN: 'primary',
-    LOGOUT: 'info',
-    CREATE_TASK: 'success',
-    UPDATE_CONFIG: 'warning',
-    USER_MANAGE: 'danger'
-  }
-  return map[type] || 'primary'
 }
 
 // ===== 枚举映射 =====
@@ -1749,10 +1623,6 @@ async function loadTabData(tab: string, force = false) {
       case 'config':
         tabLoaded[tab] = true
         await Promise.all([loadModelConfigs(), loadPlatformConfigs()])
-        break
-      case 'logs':
-        tabLoaded[tab] = true
-        await loadLogs()
         break
       case 'models':
         tabLoaded[tab] = true

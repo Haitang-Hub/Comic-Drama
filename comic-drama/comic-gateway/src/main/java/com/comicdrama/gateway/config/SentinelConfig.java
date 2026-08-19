@@ -47,8 +47,6 @@ public class SentinelConfig {
 
         flowRules.add(buildFlowRule("comic-workflow-service", defaultQps));
         flowRules.add(buildFlowRule("comic-task-service", defaultQps));
-        flowRules.add(buildFlowRule("comic-auth-service", defaultQps));
-        flowRules.add(buildFlowRule("comic-system-service", defaultQps));
         flowRules.add(buildFlowRule("comic-resource-service", defaultQps));
 
         flowRules.add(buildFlowRule("task-submit", taskSubmitQps));

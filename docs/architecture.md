@@ -1,186 +1,208 @@
-# 技术架构设计
+# 架构设计
 
-> 本文档完整描述漫剧AI引擎的微服务分层、工作流核心机制、双执行模式原理与故障域隔离设计。
-
----
-
-## 一、整体架构分层
-
-漫剧AI引擎采用「按业务域垂直拆分」的微服务架构，支持各业务模块独立扩容。例如 AI 绘图任务高峰时，可单独扩容 `workflow-service`，而不影响鉴权与任务调度。
-
-引擎分为三层：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  接入层                                                       │
-│  Gateway(8070) · Sa-Token 鉴权 · WebSocket 实时推送 · 前端    │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│  工作流调度层                                                 │
-│  task-service(8103)   任务生命周期 / 队列 / 断点恢复          │
-│  workflow-service(8104)  9步 Handler 编排 / 真实 AI 调用      │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────────┐
-│  资源与 AI 网关层                                             │
-│  system-service(8102)  AI 模型配置 / Prompt / Token 计费      │
-│  resource-service(8105)  MinIO 存储 / 作品 / 签名 URL         │
-│  auth-service(8101)     用户 / 角色 / 权限 (RBAC)             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 微服务模块清单
-
-| 模块 | 端口 | 职责 |
-|------|------|------|
-| comic-eureka | 8761 | 注册中心（单节点，可换 Nacos） |
-| comic-gateway | 8070 | 统一入口、鉴权、WebSocket 代理、Sentinel 限流 |
-| comic-auth-service | 8101 | 登录/注册/用户·角色·权限管理 |
-| comic-system-service | 8102 | AI 模型配置/Prompt 模板/系统配置/操作日志/统计 |
-| comic-task-service | 8103 | 任务核心/队列/进度/失败/节点状态 |
-| comic-workflow-service | 8104 | 9 步 Handler + 真实 AI 调用 + 计费 |
-| comic-resource-service | 8105 | 作品/时间线/资源文件/MinIO 签名 URL |
-| comic-common | - | 公共能力：响应/异常/BaseEntity/枚举/存储/广播/AI 抽象/队列 |
+> 本章节详细说明漫剧AI引擎的整体架构、微服务分层、核心设计原理及横切能力。
 
 ---
 
-## 二、工作流核心设计思想
-
-### 1. 分阶段解耦
-
-将 9 步生成链路按业务语义分为三段，各段独立会话、互不污染上下文：
-
-- **阶段一 · 文本生成**：故事摘要 → 分镜脚本 → 资产设计
-- **阶段二 · 视觉资产**：资产绘图 → 衍生绘图 → 分镜绘图
-- **阶段三 · 音视频渲染**：配音合成 → 视频生成 → 视频合并
-
-每步 AI 调用使用独立上下文，前置产物以结构化数据形式注入，避免长链 Agent 的上下文无限膨胀。
-
-### 2. 故障域隔离
-
-- 单个绘图/配音步骤失败，仅重跑当前节点，前置产物持久化复用
-- 任务级断点恢复：从失败步骤恢复执行，`ArtifactLoader` 自动加载前序步骤产物
-- 节点级重生成：可对单个步骤重新生成，重置该步骤及后续节点状态
-
-### 3. 双模式调度
-
-| 模式 | exec_mode | 行为 |
-|------|-----------|------|
-| 全自动 | 0 | 9 步连续执行，可随时「暂停」保留完整产物，从断点续跑 |
-| 人工审核 | 1 | 每步完成后自动暂停，支持：①「执行下一步」单步推进 ②「继续」批量跑完后续步骤 ③「完成此阶段」等待当前步骤跑完后再暂停（保证产物完整） |
-
-**细粒度控制按钮语义**：
-
-| 按钮 | 触发时机 | 行为 |
-|------|---------|------|
-| 暂停 (PAUSE) | 排队/生成中 | 设置计划暂停标记，下一个步骤边界处进入 PAUSED |
-| 继续 (RESUME) | 已暂停 | execMode=0 → 全自动跑完；execMode=1 → 执行下一步后再暂停 |
-| 执行下一步 | 人工审核暂停 | 仅执行下一单步，完成后立即暂停 |
-| 完成此阶段 | 生成中 | 当前步骤执行完毕后进入 PAUSED，保留完整产物供审核 |
-| 重试/断点续跑 | 失败/进行中 | `findResumeStep()` 从第一个 status ∈ {1, 3} 节点恢复执行 |
-
-**人工审核 + 单图重生成流程**：
-
-1. 步骤执行完成 → 任务状态 `PAUSED`，`pendingReview=true`
-2. 审核各步骤产物，不满意可点击单张图右上角「重新生成」，支持修改描述/画风/风格参数
-3. 工作流运行时（QUEUE/RUNNING）重新生成按钮自动禁用并给出提示，避免并发冲突
-4. 单图重生成仅重置对应节点，其他步骤产物完整保留
-
-### 4. 协议化 AI 接入 + InvokerRegistry
-
-所有 AI 模型通过 `protocol` 字段路由到对应 Invoker 实现，做到「90% 新模型接入仅需配置」：
+## 一、整体架构
 
 ```
-InvokerRegistry
-  key = protocol:modelType     (如 "openai-compatible:2" = 协议:图像模型)
-  value = AiModelInvoker Bean
-    ├─ OpenAiCompatibleInvoker    ← 通用 Chat/Image 兼容接口
-    ├─ ArkImageInvoker            ← 字节方舟图像协议
-    ├─ CustomHttpInvoker          ← YAML 驱动 + JSONPath 解析
-    └─ ...
+┌─────────────────────────────────────────────────────────┐
+│                        前端（Vue 3 + TS）                  │
+│                    http://127.0.0.1:5170                  │
+└─────────────────────────────┬───────────────────────────┘
+                              │ WebSocket + REST
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│                   comic-gateway（8070）                   │
+│         Spring Cloud Gateway · Sentinel · CORS          │
+└──────┬──────────┬──────────┬──────────┬────────────────┘
+       │          │          │          │
+       ▼          ▼          ▼          ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐
+│ task-    │ │workflow- │ │resource- │ │   MySQL 8.0  │
+│ service  │ │ service  │ │ service  │ │  (comic_drama)│
+│  :8103   │ │  :8104   │ │  :8105   │ │              │
+│ 任务/队列/│ │ 流水线/   │ │ 作品/     │ │ 31张业务表   │
+│ 认证/用户 │ │ AI调用/   │ │ 资源文件/ │ │ 演示账号/admin│
+│ 统计     │ │ 计费/模型 │ │ 清理日志  │ │ 角色/权限数据 │
+│          │ │ 配置/Prompt│ │         │ │              │
+└──────────┘ └──────────┘ └──────────┘ └──────────────┘
+
+MinIO（可选）     Local File System（默认）
+ :9000/9001       F:/.../data/storage
 ```
-
-关键设计：
-- **协议层抽象**：按 `protocol`（而非服务商）实现 Invoker，避免每加一家厂商写一个类
-- **能力校验**：每个模型在 `ai_model_config.model_capabilities` 上声明 `STREAMING` / `IMAGE_TO_IMAGE` 等能力，Handler 执行前校验匹配性
-- **O(1) 路由**：`InvokerRegistry` 使用 `Map<String, AiModelInvoker>`，key 为 `protocol:modelType`，替代 O(n) 遍历
-
-### 5. 步骤-模型绑定缓存 + 版本化资产生成
-
-**StepModelBindingResolver 缓存机制**：
-- 构造时 `reload()` 全量加载 `step_model_binding` 表，`bindingCache` 常驻内存
-- `createBinding / updateBinding / clearBinding / batchUpdate` 等修改操作调用 `refreshStep(stepCode)` 刷新对应步骤缓存（非全量 reload）
-- 刷新日志：`刷新步骤绑定: stepCode=SUMMARY -> provider=xxx, model=yyy`
-
-**版本化资产生成（Version + 衍生关系）**：
-
-| 产物表 | 版本字段 | 衍生关系字段 | 说明 |
-|--------|---------|-------------|------|
-| asset_design | version | baseAssetName / derivedFrom | 如 "小雨_v2" 衍生自 "小雨_原版" |
-| asset_image | - (关联 asset_design) | baseImageId | 首版图 baseImageId=null，衍生图关联上一版 |
-| storyboard_image | - | - (sceneIndex 维度重生成) | 单图重生成 updateById 覆盖旧记录 |
-| scene_video | - | - (sceneIndex 维度) | 每分镜一个视频片段 |
-
-### 6. 资源资产沉淀
-
-角色、场景素材在 `asset_image` 表中持久化，后续步骤（衍生绘图、分镜绘图）可复用已生成资产，避免重复生成。
 
 ---
 
-## 三、模板方法模式
+## 二、微服务清单
 
-`AbstractStepHandler` 定义标准执行流程：
+> **注意**：早期版本包含 Eureka 注册中心、auth-service、system-service 三个独立服务，现已整合精简为 5 个服务（gateway + 3 业务服务 + MySQL）。auth 和 system 功能已分别并入 task-service 和 workflow-service。
+
+| 服务 | 端口 | 职责 | 依赖外部组件 |
+|------|------|------|------------|
+| **comic-gateway** | 8070 | 统一入口、路由转发、CORS、Swagger 白名单、限流熔断 | Sentinel |
+| **comic-task-service** | 8103 | 任务生命周期管理、内存队列调度、认证/用户管理、每日统计 | MySQL |
+| **comic-workflow-service** | 8104 | 9步流水线编排、AI调用、计费审计、模型配置、Prompt模板、Schema 自动迁移 | MySQL |
+| **comic-resource-service** | 8105 | 作品/时间线管理、资源文件上传下载、存储桥接、清理日志 | MySQL / MinIO / 本地文件系统 |
+
+### 服务间调用方式
+
+服务间通过 HTTP Feign 客户端直连调用，URL 在 `application.yml` 中硬编码（不再依赖 Eureka）：
+
+```yaml
+# workflow-service 调用 task-service
+workflow:
+  task-service-url: http://localhost:8103
+
+# task-service 调用 workflow-service
+workflow-client:
+  url: http://localhost:8104
+```
+
+---
+
+## 三、工作流原理
+
+### 1. 阶段划分
+
+工作流分为三个独立上下文阶段，每个阶段共享同一任务 ID，步骤间产物互相依赖：
 
 ```
-预处理（参数校验/上下文加载）
-   ↓
-调用 AI（统一 Invoker 抽象）
-   ↓
-后处理（产物格式化/资源上传）
-   ↓
-存产物（写入对应表 + 更新节点状态）
+阶段一：脚本生成（步骤 1-3）
+  故事摘要 → 分镜脚本 → 资产设计
+  └─ 纯文本 LLM 调用，轻量快速
+
+阶段二：视觉资产生成（步骤 4-7）
+  资产绘图 → 衍生绘图 → 分镜绘图 → 配音合成
+  └─ 图像 + 语音模型调用，独立上下文
+
+阶段三：视频生成（步骤 8-9）
+  视频生成 → 视频合并
+  └─ 视频模型 + 本地 ffmpeg 处理
 ```
 
-各步骤 Handler 只需实现 `doExecute`，无需关心调度、断点、审计等通用逻辑。
+### 2. 9 步执行流程
+
+```
+步骤1: story_summary   → comic_work.story_summary
+步骤2: storyboard      → comic_work.storyboard
+步骤3: asset_design    → comic_work.asset_design
+步骤4: asset_image     → asset_image 表（角色/场景首版图）
+步骤5: derivative_image → storyboard_image 表（衍生图）
+步骤6: storyboard_image → storyboard_image 表（分镜图）
+步骤7: dubbing         → storyboard_audio 表（音频片段）
+步骤8: video           → scene_video 表（视频片段）
+步骤9: video_merge     → comic_work（封面/成片/ZIP）
+```
+
+### 3. 产物版本与追溯
+
+每个产物携带版本号和衍生关系，支持：
+- 单图/单资产独立重生成
+- 历史版本对比
+- 全链路追溯（从故事摘要到成片）
+
+```
+asset_image.id=1, asset_id=42, version=1, derived_from=NULL   ← 首版
+asset_image.id=2, asset_id=42, version=2, derived_from=1      ← 基于首版衍生
+```
 
 ---
 
-## 四、批量执行机制
+## 四、横切能力
 
-批量步骤（4-8）采用「测试优先批量执行」策略：
+### 1. 限流与熔断
 
-1. 先执行第一条测试数据
-2. 测试成功后批量生成剩余数据
-3. 单项失败保留已成功项，仅重跑失败项
+- **Sentinel 规则**：`comic-drama-workflow-service` 配置流控规则，QPS 超限自动降级
+- **Fallback**：AI 调用超时/失败时返回兜底内容，不阻断任务流
 
-该机制在保证质量的同时最大化批量任务成功率。
+### 2. 缓存策略
 
----
+- **Caffeine 本地缓存**：StepModelBindingMapper、PromptTemplateService 使用，TTL 10 分钟
+- **缓存失效**：管理后台保存新配置时自动清除
 
-## 五、关键横切能力
+### 3. 监控与告警
 
-| 能力 | 实现 |
-|------|------|
-| 实时进度推送 | Gateway 原生 WebSocket `/ws/task/{taskId}`，前端自动重连 + 心跳 + HTTP 轮询降级 |
-| 任务队列 | 内存任务队列（默认）/ RocketMQ 适配器（可选） |
-| 限流降级 | Sentinel：task-submit QPS 10、ai-call QPS 5 |
-| 鉴权 | Sa-Token + JWT（无状态），角色/权限写入 token extra |
-| 对象存储 | MinIO + 本地文件双实现，可通过配置切换 |
-| 缓存 | Caffeine 本地缓存（system-service 配置缓存 + StepModelBindingResolver 步骤绑定缓存） |
-| 跨服务事件 | ApplicationEvent 广播（可换 RocketMQ） |
-| 负载均衡策略 | 权重随机 / 轮询 / 最少使用 / 一致性哈希（ModelSelectorFactory） |
-| 单图/单资产重生成 | `regenerateAssetImage` / `regenerateStoryboardImage` 异步接口，修改参数后仅覆盖当前记录 |
+- **接口耗时统计**：AOP 切面记录关键接口耗时，`operation_log` 表存储
+- **任务进度推送**：WebSocket 实时推送节点状态变更
+- **Token 用量审计**：每次 AI 调用记录 `prompt_tokens`/`completion_tokens`/`total_tokens`
+
+### 4. 认证与权限
+
+- **Sa-Token + JWT**：统一鉴权框架，网关层校验 Token
+- **RBAC 模型**：`sys_user` → `sys_role` → `sys_permission`，三张表实现细粒度权限控制
+- **Admin Token**：管理后台接口支持 header 方式传入 `x-admin-token`，绕过 JWT
 
 ---
 
-## 六、扩展点
+## 五、关键设计决策
 
-引擎内核与漫剧业务解耦，可通过以下扩展点适配其他 AI 流水线场景：
+### 为什么用工作流而非 LLM Agent？
 
-- **自定义步骤 Handler**：继承 `AbstractStepHandler`，实现 `doExecute`
-- **自定义 AI Invoker**：实现 `AiModelInvoker` 接口，接入任意模型服务
-- **自定义存储后端**：实现 `StorageService` 接口
-- **自定义队列实现**：实现 `TaskQueue` 接口
+| 维度 | Agent 长链 | 工作流引擎 |
+|------|-----------|-----------|
+| 上下文成本 | 所有步骤共享上下文，Token 指数增长 | 每步独立上下文，成本可控 |
+| 失败恢复 | 全局重跑 | 单节点恢复 |
+| 人工介入 | 黑盒执行 | 节点级审核 |
+| 成本核算 | 仅总用量 | 分步骤独立记账 |
+| 调试难度 | 难以定位问题步骤 | 每个步骤独立可观测 |
 
-详见 [插件开发指南](./extension/plugin-dev.md)。
+### 为什么协议化接入？
+
+传统模型接入需要为每个服务商写独立 Invoker，维护成本高。协议化抽象后：
+- **配置驱动**：90% 新模型只需在数据库写入配置
+- **类型路由**：按 `protocol:modelType` 自动路由到对应 Invoker
+- **YAML 扩展**：小众模型通过 YAML 模板驱动，无需写 Java 代码
+- **测试友好**：内置 Mock Invoker，开发联调无需真实 API Key
+
+---
+
+## 六、目录结构
+
+### 后端
+
+```
+comic-drama/
+├── pom.xml                          # 父 POM（BOM 管理版本）
+├── comic-common/                    # 公共组件（DTO/异常/常量/工具类）
+├── comic-gateway/                   # 网关（路由/CORS/Sentinel/白名单）
+├── comic-task-service/              # 任务服务（队列/进度/认证/用户/统计）
+├── comic-workflow-service/          # 工作流服务（9步Handler/AI调用/计费/配置）
+├── comic-resource-service/          # 资源服务（作品/资源文件/存储）
+├── sql/                             # 数据库脚本
+│   ├── comic_drama.sql              # 主脚本（31张表 + 初始数据）
+│   └── migration_*.sql             # 历史迁移脚本
+├── scripts/
+│   ├── start-backend.ps1            # 一键启动后端（7个窗口）
+│   └── start-frontend.ps1           # 一键启动前端
+└── restart-all.ps1                  # 全量重启脚本
+```
+
+### 前端
+
+```
+comic-drama-frontend/
+├── src/
+│   ├── api/                         # 接口封装（task/admin/statistics/user/work/auth）
+│   ├── views/                       # 页面组件
+│   │   ├── LoginView.vue
+│   │   ├── DashboardView.vue        # 仪表盘
+│   │   ├── TaskListView.vue         # 任务列表
+│   │   ├── TaskCreateView.vue       # 创建任务
+│   │   ├── TaskDetailView.vue       # 任务详情（9步产物/重生成/人工审核）
+│   │   ├── WorkListView.vue         # 作品列表
+│   │   ├── WorkDetailView.vue       # 作品详情（时间轴编辑）
+│   │   ├── AdminView.vue            # 管理后台容器
+│   │   ├── ProfileView.vue          # 个人中心
+│   │   └── admin/                   # 管理后台子页
+│   │       ├── ResourceCenterView.vue  # 资源中心
+│   │       └── SystemMonitorView.vue   # 系统监控
+│   ├── layouts/DashboardLayout.vue  # 侧栏+顶栏布局
+│   ├── styles/themes/               # 三主题（soft/bright/dark）
+│   └── composables/useTaskProgress.ts  # 进度组合式函数
+```
+
+---
+
+> 详细接口文档见 [API 参考](./api-reference.md)（Swagger 页面），部署指南见 [docs/deploy/install.md](./deploy/install.md)。

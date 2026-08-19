@@ -6,12 +6,9 @@
 
 | 服务 | 端口 | Swagger 地址 | 说明 |
 |------|------|--------------|------|
-| comic-eureka | 8761 | - | 注册中心控制台 |
 | comic-gateway | 8070 | - | **统一入口**，前端代理目标，含 WebSocket / Swagger 白名单 |
-| comic-auth-service | 8101 | http://localhost:8101/swagger-ui.html | 登录/注册/用户·角色·权限管理 |
-| comic-system-service | 8102 | http://localhost:8102/swagger-ui.html | AI 模型/Prompt/系统配置/操作日志/统计 |
-| comic-task-service | 8103 | http://localhost:8103/swagger-ui.html | 任务核心/队列/进度/失败/节点状态 |
-| comic-workflow-service | 8104 | http://localhost:8104/swagger-ui.html | 流水线/产物/计费/Token/步骤绑定 |
+| comic-task-service | 8103 | http://localhost:8103/swagger-ui.html | 任务核心/队列/进度/失败/节点状态 / 认证/用户管理/统计 |
+| comic-workflow-service | 8104 | http://localhost:8104/swagger-ui.html | 流水线编排/9步Handler/AI调用/计费/模型配置/Prompt模板 |
 | comic-resource-service | 8105 | http://localhost:8105/swagger-ui.html | 作品/时间线/资源文件/清理日志 |
 
 > 所有 Swagger 页面调用接口需在右上角「Authorize」填入 `Bearer <token>`。
@@ -32,6 +29,9 @@
 ```powershell
 # Windows
 netstat -ano | findstr :8070
+netstat -ano | findstr :8103
+netstat -ano | findstr :8104
+netstat -ano | findstr :8105
 
 # 终止占用进程（PID 替换为实际值）
 taskkill /PID <PID> /F

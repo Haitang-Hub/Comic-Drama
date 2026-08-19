@@ -97,7 +97,6 @@ import {
   Setting,
   SwitchButton,
   DataBoard,
-  DataAnalysis,
   Film,
   VideoCamera
 } from '@element-plus/icons-vue'
@@ -120,7 +119,6 @@ const collapsed = ref(false)
 
 const menus = [
   { path: '/dashboard', label: '仪表盘', icon: DataBoard },
-  { path: '/dashboard/stats', label: '数据看板', icon: DataAnalysis },
   { path: '/task', label: '我的任务', icon: Film },
   { path: '/work', label: '作品管理', icon: VideoCamera }
 ]

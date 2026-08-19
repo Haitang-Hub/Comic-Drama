@@ -23,9 +23,9 @@
         <div class="user-info">
           <h2 class="user-nickname">{{ profile.nickname || profile.username }}</h2>
           <p class="user-username">@{{ profile.username }}</p>
-          <div class="user-roles" v-if="profile.roleNames?.length">
-            <el-tag v-for="r in profile.roleNames" :key="r" effect="light" round size="small">
-              {{ r }}
+          <div class="user-roles" v-if="profile.role">
+            <el-tag effect="light" round size="small">
+              {{ profile.role === 'ADMIN' ? '管理员' : '普通用户' }}
             </el-tag>
           </div>
           <div class="user-status">
@@ -270,7 +270,7 @@ const profile = reactive<UserProfileVO>({
   gender: 0,
   status: 1,
   createTime: '',
-  roleNames: []
+  role: ''
 })
 
 const stats = reactive<UserStatsVO>({

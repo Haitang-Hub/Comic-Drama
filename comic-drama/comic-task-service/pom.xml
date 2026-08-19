@@ -33,11 +33,6 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
-        </dependency>
-
         <!-- OpenFeign 用于调用其他微服务 -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

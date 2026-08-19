@@ -80,7 +80,9 @@ SOURCE comic-drama/sql/comic_drama.sql;
 | 文本 | 故事摘要、分镜脚本、资产设计 | `openai-compatible` | api_url/api_key/model_name |
 | 图像 | 资产绘图、衍生绘图、分镜绘图 | `openai-compatible`（文生图）或自实现 | 额外声明 `IMAGE_TO_IMAGE` 能力 |
 | 语音 | 角色配音 | 自实现 Invoker 或 `custom-http` | - |
-| 视频 | 视频生成 | 自实现 Invoker 或 `custom-http` | - |
+| 视频 | 视频生成 | `agnes-video` 或 `custom-http` | api_url 需以 `/v1` 结尾（见下方说明） |
+
+**视频模型 URL 注意事项**：`api_url` 应填写到协议基址（如 `https://apihub.agnes-ai.com/v1`），Invoker 内部会自动追加 `/videos` 路径，不需要手动重复拼接。
 
 **快速演示路径（零配置）**：启动本地 Mock 服务，所有 AI 调用走 9876 端口：
 ```powershell
@@ -100,7 +102,7 @@ Mock 服务会对齐 Phase 5 新工作流：
 ### 方式 A：一键脚本（推荐）
 
 ```powershell
-# 后端（会自动检测 target jar，缺失则 mvn 编译；按序启动 7 个服务窗口）
+# 后端（会自动检测 target jar，缺失则 mvn 编译；按序启动 5 个服务窗口）
 .\scripts\start-backend.ps1
 
 # 前端（另开一个终端，缺失 node_modules 会自动 npm install）
@@ -117,10 +119,7 @@ cd .\comic-drama
 mvn clean install -DskipTests "-Duser.language=en" "-Duser.country=US"
 
 # 2) 按序启动（每个一条命令/窗口）
-java -jar .\comic-eureka\target\comic-eureka-*.jar
-# 等 Eureka 就绪后继续 ↓
-java -jar .\comic-auth-service\target\comic-auth-service-*.jar
-java -jar .\comic-system-service\target\comic-system-service-*.jar
+java -jar .\comic-gateway\target\comic-gateway-*.jar
 java -jar .\comic-task-service\target\comic-task-service-*.jar
 java -jar .\comic-workflow-service\target\comic-workflow-service-*.jar
 java -jar .\comic-resource-service\target\comic-resource-service-*.jar
@@ -155,6 +154,7 @@ npm run dev
 7. **断点续跑**：任务失败或进行中后，点击「重试」会从第一个 status ∈ {进行中,失败} 节点恢复
 8. 任务完成后进入「作品列表」查看最终漫剧
 9. 顶栏可切换三套主题（柔光 / 亮光 / 暗光）
+10. 资源中心（管理后台 → 资源中心）支持列表/卡片双视图，可按文件名、文件类型（图片/视频/音频/文档/其他）、任务ID筛选
 
 ---
 
@@ -178,11 +178,19 @@ storage:
 
 ### Q: 登录提示 401？
 
-检查 auth-service 与 gateway 是否已启动，以及 MySQL 中 `admin` 账号密码是否为 `123456`（SQL 已内置）。
+检查 task-service（8103）与 gateway 是否已启动，以及 MySQL 中 `admin` 账号密码是否为 `123456`（SQL 已内置）。
 
 ### Q: 任务一直「排队中」不变？
 
-检查 task-service 是否启动成功，内存队列消费者 `TaskQueueScheduler` 每 1s 轮询。
+检查 task-service 是否启动成功，内存队列消费者每 1s 轮询。重启后若存在未完成任务，`QueueRecoveryListener` 会自动将 FAILED / RUNNING 状态的任务恢复为 PENDING 重新入队。
+
+### Q: 视频重生成返回空结果？
+
+检查 workflow-service 日志中提交任务的 URL，确认 `api_url` 末尾是否已包含 `/v1`（不应出现 `.../v1/v1/videos` 双重路径）。可在管理后台 → AI 模型配置中查看并修正 `api_url`。
+
+### Q: 资源中心「资源文件」Tab 无数据？
+
+workflow 流水线写入中间产物表（asset_image / scene_video 等），资源中心通过 `ResourceSyncScheduler` 定时从中间表扫描回填 `resource_file` 表，启动时即触发一次全量同步。若无数据，检查 resource-service 日志中 `[ResourceSyncScheduler]` 输出。
 
 ### Q: AI 步骤执行失败？
 
