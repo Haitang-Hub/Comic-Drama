@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./comic-drama-frontend/src/assets/ComicDramaLogo.png" alt="漫剧AI引擎" width="120" />
+  <p align="center"><img src="comic-drama-frontend/src/assets/ComicDramaLogo.png" alt="漫剧AI引擎" width="120" /></p>
   <h1>ComicDrama 漫剧AI</h1>
   <p><b>标准化多媒体 AI 生产引擎，一站式完成文本 / 绘图 / 配音 / 分镜 / 成片全链路可管控流水线</b></p>
   <p>
@@ -259,24 +259,35 @@ SOURCE comic-drama/sql/comic_drama.sql;
 
 ### 1. 三主题样式
 
-<table>
-  <tr>
-    <td align="center"><img src="./docs/images/theme-bright.png" alt="明亮主题" width="280"/><br/><sub>明亮主题 · 默认</sub></td>
-    <td align="center"><img src="./docs/images/theme-dark.png" alt="暗黑主题" width="280"/><br/><sub>暗黑主题</sub></td>
-    <td align="center"><img src="./docs/images/theme-soft.png" alt="柔和主题" width="280"/><br/><sub>柔和主题</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/images/theme-bright.png" alt="明亮主题" width="280" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/images/theme-dark.png" alt="暗黑主题" width="280" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/images/theme-soft.png" alt="柔和主题" width="280" />
+</p>
+<p align="center">
+  <sub>明亮主题 · 默认</sub>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <sub>暗黑主题</sub>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <sub>柔和主题</sub>
+</p>
 
 ### 2. 双执行模式
 
-<table>
-  <tr>
-    <td align="center"><img src="./docs/images/workflow-auto.png" alt="全自动批量模式" width="420"/><br/><sub>全自动批量模式 · 一键跑通 9 步</sub></td>
-    <td align="center"><img src="./docs/images/workflow-review.png" alt="人工审核模式" width="420"/><br/><sub>人工审核模式 · 逐阶段把关</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/images/workflow-auto.png" alt="全自动批量模式" width="420" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/images/workflow-review.png" alt="人工审核模式" width="420" />
+</p>
+<p align="center">
+  <sub>全自动批量模式 · 一键跑通 9 步</sub>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <sub>人工审核模式 · 逐阶段把关</sub>
+</p>
 
-> 更多截图详见 [docs/images/](./docs/images/)。
+更多截图详见 [docs/images/](docs/images/)。
 
 ---
 
