@@ -64,8 +64,6 @@ public class ComicTask extends BaseEntity {
 
     private Integer queuePosition;
 
-    private LocalDateTime estimatedCompleteTime;
-
     private LocalDateTime startTime;
 
     private LocalDateTime endTime;

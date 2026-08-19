@@ -57,8 +57,6 @@ public class ResourceFile implements Serializable {
 
     private LocalDateTime tempUrlExpire;
 
-    private String md5;
-
     private String sourceType;
 
     private String sourceNode;

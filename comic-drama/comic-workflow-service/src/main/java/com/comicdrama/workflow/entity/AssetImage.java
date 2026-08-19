@@ -20,7 +20,6 @@ public class AssetImage extends BaseTimeEntity {
     private Long baseImageId;
     private String baseImageUrl;
     private String promptUsed;
-    private String generateParams;
     private Integer status;
     private Integer width;
     private Integer height;

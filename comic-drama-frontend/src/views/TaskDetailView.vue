@@ -397,27 +397,6 @@
           </div>
         </div>
 
-        <!-- 素材提示词（保留结构，目前后端未接入，暂不显示） -->
-        <div v-if="detail.materialPrompts?.length" class="sketch-card prod-card">
-          <div class="card-head">
-            <div class="card-head-left">
-              <h3>素材提示词（{{ detail.materialPrompts.length }}）</h3>
-            </div>
-          </div>
-          <div class="prompt-grid">
-            <div v-for="p in detail.materialPrompts" :key="p.id ?? p.sceneIndex" class="prompt-item">
-              <div class="prompt-head">
-                <span class="prompt-tag">#{{ p.sceneIndex }}</span>
-                <span class="prompt-type" v-if="p.promptType">{{ p.promptType }}</span>
-              </div>
-              <p class="prompt-text">{{ p.promptText }}</p>
-              <p v-if="p.negativePrompt" class="prompt-neg">
-                <span class="neg-label">负向：</span>{{ p.negativePrompt }}
-              </p>
-            </div>
-          </div>
-        </div>
-
         <!-- 分镜画面 -->
         <div v-if="detail.images?.length" class="sketch-card prod-card">
           <div class="card-head">
@@ -532,8 +511,8 @@
           </div>
         </div>
 
-        <!-- ⑨ 成片下载（步骤9产物：ZIP播放清单包）+ 在线播放（步骤8完成后也可用） -->
-        <div v-if="detail.finalVideoUrl || detail.videos?.length" class="sketch-card prod-card final-card">
+        <!-- ⑨ 成片播放与下载（步骤8完成后有场景视频即可播放；ZIP采用懒打包：点击"下载成片包"时按需生成，省CPU/存储） -->
+        <div v-if="detail.videos?.length" class="sketch-card prod-card final-card">
           <div class="card-head">
             <div class="card-head-left">
               <h3>⑨ 成片播放与下载</h3>
@@ -555,8 +534,8 @@
                   <span v-if="detail.resolution">{{ detail.resolution }}</span>
                 </div>
                 <div class="final-desc">
-                  <span v-if="detail.finalVideoUrl">ZIP 包含：编号视频文件（001_xxx.mp4, 002_xxx.mp4...）+ manifest.json 播放清单</span>
-                  <span v-else>已有场景视频可直接播放；完成步骤9后可下载打包成片</span>
+                  <span v-if="detail.finalVideoUrl">ZIP 缓存已生成，点击立即下载；若内容有更新将自动重新打包</span>
+                  <span v-else>ZIP 包含：编号视频文件（001_xxx.mp4, 002_xxx.mp4...）+ manifest.json 播放清单（点击下载时打包，重生成视频不会白打包）</span>
                 </div>
               </div>
             </div>
@@ -569,23 +548,15 @@
                 <el-icon><VideoPlay /></el-icon>
                 <span>播放成片</span>
               </el-button>
-              <a
-                v-if="detail.finalVideoUrl"
-                :href="detail.finalVideoUrl"
-                download
-                class="final-download-btn"
-              >
-                <el-icon><Download /></el-icon>
-                <span>下载成片包（ZIP）</span>
-              </a>
               <el-button
-                v-else
-                disabled
+                :loading="zipBuilding"
+                :disabled="zipBuilding"
+                @click="handleDownloadZip"
                 class="final-download-btn"
-                title="完成步骤9（视频合并）后可下载打包成片"
+                type="success"
               >
-                <el-icon><Download /></el-icon>
-                <span>步骤9未完成</span>
+                <el-icon v-if="!zipBuilding"><Download /></el-icon>
+                <span>{{ zipBuilding ? '打包ZIP中，请稍候...' : '下载成片包（ZIP）' }}</span>
               </el-button>
             </div>
           </div>
@@ -905,6 +876,7 @@ import {
   type StoryboardImageVO,
   type AssetDesignVO
 } from '@/api/task'
+import { downloadWorkZip } from '@/api/work'
 import { useTaskProgress } from '@/composables/useTaskProgress'
 import { TaskStatus, statusMeta, stepName, ART_STYLES, VISUAL_STYLES, ART_STYLE_LEGACY_MAP, VISUAL_STYLE_LEGACY_MAP } from '@/constants/task'
 import { Doodles } from '@/components/illustrations'
@@ -955,6 +927,42 @@ const playModeLabel: Record<PlayMode, string> = {
 const isSingleLoop = computed(() => playMode.value === 'single-loop')
 const playbackRate = ref(1)
 const runtimeManifest = ref<string>('')
+
+// ======== 成片 ZIP 懒打包下载 ========
+const zipBuilding = ref(false)
+
+async function handleDownloadZip() {
+  if (zipBuilding.value) return
+  const id = detail.value.id
+  if (!id) {
+    ElMessage.error('任务ID不存在，无法下载')
+    return
+  }
+  // 如果已有缓存 finalVideoUrl，可直接快速下载（但也走接口保证签名有效；接口内部会命中缓存直接重签名秒回）
+  zipBuilding.value = true
+  try {
+    const signedUrl = await downloadWorkZip(Number(id), false)
+    if (!signedUrl) {
+      ElMessage.error('打包成功但未获取到下载地址')
+      return
+    }
+    // 通过临时 a 标签触发浏览器下载，避免 window.location 导致页面跳转离开
+    const a = document.createElement('a')
+    a.href = signedUrl
+    a.download = `comic-${detail.value.taskNo || id}.zip`
+    a.target = '_blank'
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => document.body.removeChild(a), 1000)
+    ElMessage.success('成片包已开始下载')
+  } catch (e: any) {
+    console.error('[handleDownloadZip] 失败:', e)
+    ElMessage.error(e?.message || e || '打包成片ZIP失败，请稍后重试')
+  } finally {
+    zipBuilding.value = false
+  }
+}
 
 const playList = computed(() => {
   const manifestStr = runtimeManifest.value || detail.value.finalWorkManifest
@@ -1243,7 +1251,6 @@ const hasAnyProduct = computed(() => {
     d.assetDesigns?.length ||
     d.assetImages?.length ||
     d.deriveImages?.length ||
-    d.materialPrompts?.length ||
     d.images?.length ||
     d.audios?.length ||
     d.videos?.length ||
@@ -1385,13 +1392,11 @@ function nodeArtifactSummary(step?: number): string {
     case 2: return d.storyboards?.length ? `${d.storyboards.length}条分镜` : ''
     case 3: return d.assetDesigns?.length ? `${d.assetDesigns.length}项设计` : ''
     case 4: return d.assetImages?.length ? `${d.assetImages.length}张图片` : ''
-    case 5: return d.deriveImages?.length
-      ? `${d.deriveImages.length}张衍生图`
-      : (d.materialPrompts?.length ? `${d.materialPrompts.length}条提示词` : '')
+    case 5: return d.deriveImages?.length ? `${d.deriveImages.length}张衍生图` : ''
     case 6: return d.images?.length ? `${d.images.length}张分镜图` : ''
     case 7: return d.audios?.length ? `${d.audios.length}条音频` : (isStepSkippedInDetail(7) ? '已跳过' : '')
     case 8: return d.videos?.length ? `${d.videos.length}段视频` : ''
-    case 9: return d.finalVideoUrl ? '成片包已生成' : (d.videos?.length ? '合成中' : '')
+    case 9: return d.finalVideoUrl ? '成片包已缓存' : (d.videos?.length ? '可下载（按需打包）' : '')
     default: return ''
   }
 }

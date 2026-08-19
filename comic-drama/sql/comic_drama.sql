@@ -183,12 +183,12 @@ CREATE TABLE `comic_task` (
   `failure_detail`              TEXT                  DEFAULT NULL   COMMENT '失败详情',
   `retry_count`                 INT                   DEFAULT 0      COMMENT '重试次数',
   `queue_position`              INT                   DEFAULT NULL   COMMENT '排队位置',
-  `estimated_complete_time`     DATETIME              DEFAULT NULL   COMMENT '预估完成时间',
   `start_time`                  DATETIME              DEFAULT NULL   COMMENT '开始执行时间',
   `end_time`                    DATETIME              DEFAULT NULL   COMMENT '完成/失败时间',
   `total_consume_time`          INT                   DEFAULT 0      COMMENT '总耗时（秒）',
   `cover_url`                   VARCHAR(512)          DEFAULT NULL   COMMENT '任务封面图URL',
   `final_video_url`             VARCHAR(512)          DEFAULT NULL   COMMENT '最终成片视频URL',
+  `zip_object_key`              VARCHAR(512)          DEFAULT NULL   COMMENT 'ZIP包存储objectKey（懒打包缓存命中时直接重签名）',
   `final_work_manifest`         MEDIUMTEXT            DEFAULT NULL   COMMENT '成片manifest.json(包含视频列表)',
   `remark`                      VARCHAR(255)          DEFAULT NULL   COMMENT '备注',
   `create_time`                 DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -212,12 +212,9 @@ CREATE TABLE `task_queue` (
   `queue_status`    TINYINT      NOT NULL                          COMMENT '队列状态：0等待中 1执行中 2已完成 3已取消',
   `priority`        INT                   DEFAULT 100              COMMENT '优先级（数字越小优先级越高）',
   `queue_position`  INT                   DEFAULT 0                COMMENT '当前排队位置',
-  `waiting_count_ahead` INT               DEFAULT 0                COMMENT '前方等待任务数',
-  `estimated_wait_seconds` INT            DEFAULT 0                COMMENT '预估等待秒数',
   `enqueued_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '入队时间',
   `started_time`    DATETIME              DEFAULT NULL             COMMENT '开始执行时间',
   `finished_time`   DATETIME              DEFAULT NULL             COMMENT '执行完成时间',
-  `worker_node`     VARCHAR(64)           DEFAULT NULL             COMMENT '执行节点',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_task_id` (`task_id`),
   KEY `idx_queue_status` (`queue_status`),
@@ -284,9 +281,6 @@ CREATE TABLE `task_node_state` (
   `start_time`        DATETIME              DEFAULT NULL           COMMENT '步骤开始时间',
   `end_time`          DATETIME              DEFAULT NULL           COMMENT '步骤结束时间',
   `duration_ms`       BIGINT                DEFAULT NULL           COMMENT '步骤耗时（毫秒）',
-  `parent_node_key`   VARCHAR(64)           DEFAULT NULL           COMMENT '父节点标识',
-  `content_snapshot`  LONGTEXT              DEFAULT NULL           COMMENT '节点内容快照（JSON）',
-  `resource_id`       BIGINT                DEFAULT NULL           COMMENT '关联资源文件ID',
   `can_regenerate`    TINYINT               DEFAULT 1              COMMENT '是否允许单点重生成：0否 1是',
   `regenerate_count`  INT                   DEFAULT 0              COMMENT '已重生成次数',
   `last_regenerate_time` DATETIME           DEFAULT NULL           COMMENT '最后重生成时间',
@@ -385,7 +379,6 @@ CREATE TABLE `asset_image` (
   `base_image_id`    BIGINT                DEFAULT NULL            COMMENT '基底图ID（上一版本图片）',
   `base_image_url`   VARCHAR(512)          DEFAULT NULL            COMMENT '基底图URL（上一版本图片，作为输入）',
   `prompt_used`      TEXT                  DEFAULT NULL            COMMENT '实际使用的生成提示词',
-  `generate_params`  TEXT                  DEFAULT NULL            COMMENT '生成参数JSON',
   `status`           TINYINT               DEFAULT 0               COMMENT '状态：0待生成 1已生成 2已编辑 3生成失败',
   `width`            INT                   DEFAULT NULL            COMMENT '图片宽度（px）',
   `height`           INT                   DEFAULT NULL            COMMENT '图片高度（px）',
@@ -410,7 +403,6 @@ CREATE TABLE `storyboard_image` (
   `character_refs`   VARCHAR(512)          DEFAULT NULL            COMMENT '参考人物资产ID列表（逗号分隔）',
   `scene_refs`       VARCHAR(512)          DEFAULT NULL            COMMENT '参考场景资产ID列表（逗号分隔）',
   `prop_refs`        VARCHAR(512)          DEFAULT NULL            COMMENT '参考道具资产ID列表（逗号分隔）',
-  `generate_params`  TEXT                  DEFAULT NULL            COMMENT '生成参数JSON',
   `status`           TINYINT               DEFAULT 0               COMMENT '状态：0待生成 1已生成 2已编辑 3生成失败',
   `regenerate_count` INT                   DEFAULT 0               COMMENT '重生成次数',
   `width`            INT                   DEFAULT NULL            COMMENT '图片宽度（px）',
@@ -431,10 +423,8 @@ CREATE TABLE `storyboard_audio` (
   `storyboard_id`    BIGINT       NOT NULL                         COMMENT '分镜ID',
   `audio_url`        VARCHAR(512)          DEFAULT NULL            COMMENT '音频URL',
   `text`             TEXT                  DEFAULT NULL            COMMENT '合成文本（台词）',
-  `voice_asset_id`   BIGINT                DEFAULT NULL            COMMENT '绑定音色资产ID（asset_design.id）',
   `emotion`          VARCHAR(64)           DEFAULT NULL            COMMENT '情绪标签',
   `speed`            INT                   DEFAULT 50              COMMENT '语速（0-100）',
-  `emotion_intensity` INT                  DEFAULT 50              COMMENT '情绪强度（0-100）',
   `duration`         DECIMAL(10,2)         DEFAULT NULL            COMMENT '音频时长（秒）',
   `status`           TINYINT               DEFAULT 0               COMMENT '状态：0待生成 1已生成 2已编辑 3生成失败',
   `regenerate_count` INT                   DEFAULT 0               COMMENT '重生成次数',
@@ -442,8 +432,7 @@ CREATE TABLE `storyboard_audio` (
   `update_time`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   KEY `idx_storyboard_id` (`storyboard_id`),
-  KEY `idx_task_id` (`task_id`),
-  KEY `idx_voice_asset` (`voice_asset_id`)
+  KEY `idx_task_id` (`task_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='分镜配音表（步骤6产物）';
 
 -- -----------------------------------------------------------------------------
@@ -456,14 +445,11 @@ CREATE TABLE `scene_video` (
   `video_url`         VARCHAR(512)          DEFAULT NULL           COMMENT '视频URL',
   `thumbnail_url`     VARCHAR(512)          DEFAULT NULL           COMMENT '视频封面URL',
   `base_frame_url`    VARCHAR(512)          DEFAULT NULL           COMMENT '首帧基准图URL',
-  `prev_video_id`     BIGINT                DEFAULT NULL           COMMENT '上一段视频ID（用于帧承接）',
-  `prev_video_last_frame` VARCHAR(512)       DEFAULT NULL           COMMENT '上一段视频最后一帧URL（作为本段首帧参考）',
   `storyboard_ids`    VARCHAR(512)          DEFAULT NULL           COMMENT '包含的分镜ID列表',
   `storyboard_seq_range` VARCHAR(64)          DEFAULT NULL           COMMENT '分镜序号区间（如 1-5）',
   `frame_count`       INT                   DEFAULT 0              COMMENT '帧数',
   `duration`          DECIMAL(10,2)         DEFAULT NULL           COMMENT '视频时长（秒）',
   `resolution`        VARCHAR(16)           DEFAULT NULL           COMMENT '分辨率',
-  `generate_params`   TEXT                  DEFAULT NULL           COMMENT '生成参数JSON',
   `status`            TINYINT               DEFAULT 0              COMMENT '状态：0待生成 1已生成 2已编辑 3生成失败',
   `regenerate_count`  INT                   DEFAULT 0              COMMENT '重生成次数',
   `create_time`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -492,6 +478,7 @@ CREATE TABLE `comic_work` (
   `resolution`     VARCHAR(16)           DEFAULT NULL              COMMENT '分辨率',
   `aspect_ratio`   VARCHAR(16)           DEFAULT NULL              COMMENT '画面比例',
   `file_size`      BIGINT                DEFAULT 0                 COMMENT '成片文件大小（字节）',
+  `zip_object_key` VARCHAR(512)          DEFAULT NULL              COMMENT 'ZIP包存储objectKey（懒打包缓存命中时直接重签名）',
   `status`         TINYINT               DEFAULT 1                 COMMENT '状态：0草稿 1已完成 2已归档 3已删除',
   `is_public`      TINYINT               DEFAULT 0                 COMMENT '是否公开：0私有 1公开',
   `view_count`     INT                   DEFAULT 0                 COMMENT '浏览次数',
@@ -529,31 +516,6 @@ CREATE TABLE `comic_work_timeline` (
   KEY `idx_order_index` (`order_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='作品时间线表（场景组分镜回放顺序）';
 
--- -----------------------------------------------------------------------------
--- 24b. 素材提示词表（步骤4产物：人物/场景/道具/音色长期变化）
--- -----------------------------------------------------------------------------
-CREATE TABLE `material_prompt` (
-  `id`                   BIGINT       NOT NULL AUTO_INCREMENT            COMMENT '主键ID',
-  `task_id`              BIGINT       NOT NULL                           COMMENT '任务ID',
-  `material_type`        TINYINT      NOT NULL                           COMMENT '素材类型：1人物 2场景 3道具 4音色 5其他',
-  `material_code`        VARCHAR(64)  NOT NULL                           COMMENT '素材编码（如 char_main_char01）',
-  `material_name`        VARCHAR(128)          DEFAULT NULL              COMMENT '素材名称',
-  `prompt_content`       LONGTEXT              DEFAULT NULL              COMMENT 'AI绘图/配音提示词',
-  `reference_image_url`  VARCHAR(1024)         DEFAULT NULL              COMMENT '参考图URL',
-  `voice_sample_url`     VARCHAR(1024)         DEFAULT NULL              COMMENT '音色样本URL',
-  `start_storyboard_seq` INT                 DEFAULT NULL                COMMENT '起始分镜序号',
-  `end_storyboard_seq`   INT                 DEFAULT NULL                COMMENT '结束分镜序号',
-  `is_long_term`         TINYINT              DEFAULT 0                  COMMENT '是否长期素材：0否 1是',
-  `predecessor_id`       BIGINT               DEFAULT NULL               COMMENT '前置素材ID（继承/变化关系）',
-  `create_time`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_time`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_task_id` (`task_id`),
-  KEY `idx_material_type` (`material_type`),
-  KEY `idx_material_code` (`material_code`),
-  KEY `idx_long_term` (`is_long_term`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='素材提示词表（步骤4产物：人物/场景/道具/音色）';
-
 
 -- =============================================================================
 -- 模块六：资源存储管理
@@ -579,7 +541,6 @@ CREATE TABLE `resource_file` (
   `file_url`       VARCHAR(1024)         DEFAULT NULL              COMMENT '永久访问URL',
   `temp_url`       VARCHAR(1024)         DEFAULT NULL              COMMENT '临时签名URL',
   `temp_url_expire` DATETIME             DEFAULT NULL              COMMENT '临时URL过期时间',
-  `md5`            VARCHAR(64)           DEFAULT NULL              COMMENT '文件MD5',
   `source_type`    VARCHAR(32)           DEFAULT NULL              COMMENT '来源类型',
   `source_node`    VARCHAR(64)           DEFAULT NULL              COMMENT '来源节点',
   `is_public`      TINYINT               DEFAULT 0                 COMMENT '是否公开：0私有 1公开',
@@ -590,8 +551,7 @@ CREATE TABLE `resource_file` (
   KEY `idx_task_id` (`task_id`),
   KEY `idx_user_id` (`user_id`),
   KEY `idx_file_type` (`file_type`),
-  KEY `idx_object_key` (`object_key`),
-  KEY `idx_md5` (`md5`)
+  KEY `idx_object_key` (`object_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='资源文件表';
 
 -- -----------------------------------------------------------------------------
@@ -700,16 +660,22 @@ INSERT INTO `sys_user` (`username`, `password`, `nickname`, `status`, `role`) VA
 --             9=agnes_video(Agnes Video V2.0 多关键帧视频, 默认禁用,使用时启用并检查API Key)
 -- -----------------------------------------------------------------------------
 INSERT INTO `ai_model_config` (`model_provider`, `model_name`, `model_type`, `protocol`, `capabilities`, `api_url`, `api_key`, `status`) VALUES
-('deepseek', 'deepseek-v4-flash', 1, 'openai-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'https://api.deepseek.com/v1', 'yourkey', 0),
-('modelscope', 'deepseek-ai/DeepSeek-V4-Pro', 1, 'modelscope-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'https://api-inference.modelscope.cn/v1', 'yourkey', 1),
-('modelscope', 'Tongyi-MAI/Z-Image-Turbo', 2, 'modelscope-image', '["IMAGE_TO_IMAGE"]', 'https://api-inference.modelscope.cn/v1', 'yourkey', 1),
-('seedream', 'doubao-seedream-5-0-260128', 2, 'ark-image', '["IMAGE_TO_IMAGE"]', 'https://ark.cn-beijing.volces.com/api/v3', 'yourkey', 0),
-('seedance', 'doubao-seedance-2-0-mini-260615', 4, 'ark-video', '["FIRST_FRAME_LOCK"]', 'https://ark.cn-beijing.volces.com/api/v3', 'yourkey', 0),
-('seed_tts', 'Seed-TTS 语音模型', 3, 'ark-tts', '["MULTI_VOICE"]', 'https://ark.cn-beijing.volces.com/api/v3', 'yourkey', 0),
-('modelscope', 'black-forest-labs/FLUX.2-klein-9B', 2, 'modelscope-image', '["IMAGE_TO_IMAGE"]', 'https://api-inference.modelscope.cn/v1', 'yourkey', 1),
+-- 1. deepseek
+('deepseek', 'deepseek-v4-flash', 1, 'openai-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'https://api.deepseek.com/v1', 'YOUR_API_KEY', 0),
+-- 2. agnes
+('agnes', 'agnes-2.5-flash', 1, 'openai-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'https://apihub.agnes-ai.com/v1', 'YOUR_API_KEY', 0),
+('agnes', 'agnes-image-2.0-flash', 2, 'openai-image', '["TEXT_TO_IMAGE","IMAGE_TO_IMAGE"]', 'https://apihub.agnes-ai.com/v1', 'YOUR_API_KEY', 1),
+('agnes_video', 'agnes-video-v2.0', 4, 'agnes-video', '["FIRST_FRAME_LOCK"]', 'https://apihub.agnes-ai.com/v1', 'YOUR_API_KEY', 1),
+-- 3. modelscope
+('modelscope', 'deepseek-ai/DeepSeek-V4-Pro', 1, 'modelscope-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'https://api-inference.modelscope.cn/v1', 'YOUR_API_KEY', 0),
+('modelscope', 'Tongyi-MAI/Z-Image-Turbo', 2, 'modelscope-image', '["IMAGE_TO_IMAGE"]', 'https://api-inference.modelscope.cn/v1', 'YOUR_API_KEY', 0),
+('modelscope', 'black-forest-labs/FLUX.2-klein-9B', 2, 'modelscope-image', '["IMAGE_TO_IMAGE"]', 'https://api-inference.modelscope.cn/v1', 'YOUR_API_KEY', 0),
+-- 4. mock
 ('mock', 'mock-test-text', 1, 'openai-chat', '["STREAMING","FUNCTION_CALLING","LONG_CONTEXT"]', 'http://127.0.0.1:9876/v1', 'mock-test-key-12345', 1),
-('agnes_video', 'agnes-video-v2.0', 4, 'agnes-video', '["FIRST_FRAME_LOCK"]', 'https://apihub.agnes-ai.com/v1', 'yourkey', 1);
-
+-- 5. 其他（seedream, seedance, seed_tts）
+('seedream', 'doubao-seedream-5-0-260128', 2, 'ark-image', '["IMAGE_TO_IMAGE"]', 'https://ark.cn-beijing.volces.com/api/v3', 'YOUR_API_KEY', 0),
+('seedance', 'doubao-seedance-2-0-mini-260615', 4, 'ark-video', '["FIRST_FRAME_LOCK"]', 'https://ark.cn-beijing.volces.com/api/v3', 'YOUR_API_KEY', 0),
+('seed_tts', 'Seed-TTS 语音模型', 3, 'ark-tts', '["MULTI_VOICE"]', 'https://ark.cn-beijing.volces.com/api/v3', 'YOUR_API_KEY', 0);
 -- -----------------------------------------------------------------------------
 -- 9.3 步骤-模型绑定初始数据（8步工作流，步骤拆分后顺序如下）
 -- model_config_id 关联上方 ai_model_config 自增ID：
@@ -722,14 +688,14 @@ INSERT INTO `ai_model_config` (`model_provider`, `model_name`, `model_type`, `pr
 --                            可选 9 (agnes_video/agnes-video-v2.0 多关键帧视频,需先启用)
 -- -----------------------------------------------------------------------------
 INSERT INTO `step_model_binding` (`step_code`, `step_name`, `step_order`, `model_config_id`, `model_type`) VALUES
-('SUMMARY',          '故事摘要', 1, 8, 1),
-('STORYBOARD',       '分镜脚本', 2, 8, 1),
-('ASSET_DESIGN',     '资产设计', 3, 8, 1),
-('ASSET_IMAGE',      '资产绘图', 4, 3, 2),
-('ASSET_DERIVE',     '衍生绘图', 5, 7, 2),
-('STORYBOARD_IMAGE', '分镜绘图', 6, 7, 2),
-('AUDIO',            '配音合成', 7, 6, 3),
-('VIDEO',            '视频生成', 8, 9, 4);
+('SUMMARY',          '故事摘要', 1, 8, 1),   -- mock-test-text
+('STORYBOARD',       '分镜脚本', 2, 8, 1),   -- mock-test-text
+('ASSET_DESIGN',     '资产设计', 3, 8, 1),   -- mock-test-text
+('ASSET_IMAGE',      '资产绘图', 4, 3, 2),   -- agnes-image-2.0-flash
+('ASSET_DERIVE',     '衍生绘图', 5, 3, 2),   -- agnes-image-2.0-flash
+('STORYBOARD_IMAGE', '分镜绘图', 6, 3, 2),   -- agnes-image-2.0-flash
+('AUDIO',            '配音合成', 7, 11, 3),  -- Seed-TTS
+('VIDEO',            '视频生成', 8, 4, 4);   -- agnes-video-v2.0
 
 -- -----------------------------------------------------------------------------
 -- 9.4 系统配置初始数据
@@ -756,45 +722,46 @@ INSERT INTO `system_config` (`config_key`, `config_value`, `value_type`, `config
 -- 9.5 Prompt模板初始数据（9阶段，对应9步工作流）
 -- -----------------------------------------------------------------------------
 INSERT INTO `prompt_template` (`template_code`, `template_name`, `stage`, `content`, `variables`, `description`, `current_version`, `is_enabled`) VALUES
--- 步骤1：摘要生成（同时生成正/负面提示词，供步骤4/5/6使用）
+-- 步骤1：摘要生成（生成故事摘要+角色外貌档案+场景视觉描述，供步骤2/3/4/5/6使用）
 ('summary', '故事摘要生成模板', 1,
- '故事需求：{{story_requirement}}\n预估时长：{{duration}}秒\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n根据以上故事需求和预估时长，按照预估时长合理规划故事长短，编写详细的故事摘要，摘要中没有时间分配。',
+ '故事需求：{{story_requirement}}\n预估时长：{{duration}}秒\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n\n请根据以上信息编写详细的故事摘要，要求：\n1. 包含完整的故事脉络（起承转合），按预估时长合理规划篇幅，摘要中不包含时间分配。\n2. 为每个主要角色撰写外貌档案：性别、年龄、发型与发色、瞳色、脸型、体型、标志性服装与配饰、性格气质。确保后续步骤能据此刻画一致的角色形象。\n3. 描述每个场景的视觉特征：地点类型、光线条件、时段（昼/夜）、天气/季节、色调与氛围、关键陈设。保证同一场景在全片中视觉统一。\n4. 标注关键道具（推动剧情或被角色反复使用的物品），简述其材质、颜色、形状与功能用途。\n5. 若角色/场景/道具在故事中发生永久性变化（换装、昼夜切换、季节变、年龄变等），在摘要中明确标注变化节点。',
  '["story_requirement","duration","art_style","visual_style"]', '步骤1：故事摘要生成', 1, 1),
 
 -- 步骤2：分镜生成
 ('storyboard', '分镜脚本生成模板', 2,
- '故事摘要：{{summary}}\n故事总时长：{{duration}}秒\n根据以上故事摘要和总时长合理分配，按照 "分镜序号（全局递增，从 1 开始）|本镜时长（秒）|场景分组 ID（从 1 开始）|组内序号（同场景组内序号，从 1 开始）|镜头角度（近景 / 远景 / 俯视等）|镜头描述（动作、运镜）|场景（格式：场景名称_版本标识）|出场角色（分号分隔，没有写”无“，格式：角色名称_版本标识）|出场道具（分号分隔，没有写”无“，格式：道具名称_版本标识）|分镜描述（场景/角色/道具要写完整名称）|台词内容（分号分隔，按时间顺序，没有写”无“）|画面描述（场景/角色/道具要写完整名称，不包含画风）" 格式要求生成分镜脚本（人物必须使用具体名称，单个分镜最多不能超过15秒，分镜以秒为单位不使用小数，每个镜头的台词和动作复杂度决定时长，台词中要包含人物和语气，不能长时间没有台词，同一场景/角色/道具名称不要变化，只有“推动剧情发展”或“被角色反复使用”的道具才写入，单个分镜出现的不作为道具，版本标识是资产的永久性/结构性改变，如场景的季节变、结构变，角色的换衣、换发、年龄变、昼夜切换、道具的功能变、形态变、颜色变，版本标识需要是一个简洁的词），使用|分割字段，不要包含表头。',
+ '故事摘要：{{summary}}\n故事总时长：{{duration}}秒\n\n请根据以上信息生成分镜脚本。\n\n【一致性规则（最重要）】\n- 同一角色/场景/道具在所有分镜中必须使用完全相同的名称（含版本标识），不得出现任何变体或简称。\n- 版本标识格式：资产名称_版本词（如 小红_冬装、教室_夜晚），仅当资产发生永久性/结构性改变时才升版本（换衣、换发、年龄变、昼夜切换、季节变、道具形态变等），版本词需简洁。单次出现的临时变化不升版本。\n- 同一场景组（场景分组ID相同）内的分镜应保持画面连贯：角色位置、光线、氛围自然过渡，不得出现突兀跳变。\n- 人物必须使用具体名称，不得使用代词（他/她）替代角色名。\n\n【时长规则】\n- 单个分镜不超过15秒，以秒为单位取整数，不使用小数。\n- 台词多、动作复杂的分镜适当加长，安静镜头可缩短，但不能长时间没有台词。\n- 台词中要包含角色名和语气。\n\n【道具规则】\n- 只有推动剧情发展或被角色反复使用的道具才写入出场道具栏，单个分镜中出现的临时物品不作为道具。\n\n【输出格式】\n每行一条分镜，字段以 | 分隔，不要包含表头：\n分镜序号（全局递增，从1开始）|本镜时长（秒）|场景分组ID（从1开始）|组内序号（同场景组内从1开始）|镜头角度（近景/远景/俯视等）|镜头描述（动作、运镜）|场景（场景名称_版本标识）|出场角色（分号分隔，没有写无，格式：角色名称_版本标识）|出场道具（分号分隔，没有写无，格式：道具名称_版本标识）|分镜描述（场景/角色/道具用完整名称）|台词内容（分号分隔，按时间顺序，含角色名和语气，没有写无）|画面描述（场景/角色/道具用完整名称，不含画风）',
  '["summary","duration"]', '步骤2：分镜脚本生成', 1, 1),
 
 -- 步骤3：资产设计
 ('asset_design', '资产设计模板', 3,
- '分镜脚本：{{storyboards}}\n根据以上分镜脚本按照 "资产类型（人物/场景/道具/音色等）|资产名称（资产名称_版本标识）|基础资产名（无版本标识，用于归组）|衍生自（上一版本资产名，没有写”无“）|资产描述（资产的详细描述）|版本（由于变化产生的不同版本，从 1 开始）" 格式生成人物/场景/道具/音色等资产脚本（只在一个分镜中出现的人物/场景/道具/音色等不需要生成资产脚本，音色资产名称和基础资产名必须保持一致，版本号不为1时资产描述需要描述和上一版本的区别），使用|分割字段，不要包含表头。',
+ '分镜脚本：{{storyboards}}\n\n请根据以上分镜脚本生成资产设计。\n\n【生成范围】\n只为在多个分镜中出现的人物/场景/道具/音色生成资产脚本；仅在一个分镜中出现的无需生成。\n\n【角色描述要求】\n人物资产描述必须包含：性别、年龄、发型与发色、瞳色、脸型、体型、肤色、标志性服装与配饰、性格气质。版本大于1时需说明与上一版本的具体差异（如：更换为冬装——长款羽绒服+围巾，发型不变）。\n\n【场景描述要求】\n场景资产描述必须包含：地点类型、光线条件、时段（昼/夜）、天气/季节、色调与氛围、关键陈设。版本大于1时需说明结构性变化（如：从白天切换为夜晚——灯光改为暖黄室内灯，窗外变暗）。\n\n【道具描述要求】\n道具资产描述需包含：材质、颜色、形状、尺寸、功能用途。\n\n【音色规则】\n音色资产名称和基础资产名必须保持一致，版本固定为1。\n\n【输出格式】\n每行一条资产，字段以 | 分隔，不要包含表头：\n资产类型（人物/场景/道具/音色等）|资产名称（资产名称_版本标识）|基础资产名（无版本标识，用于归组）|衍生自（上一版本资产名，没有写无）|资产描述（详细外观描述）|版本（由于变化产生的不同版本，从1开始）',
  '["storyboards"]', '步骤3：资产设计', 1, 1),
 
 -- 步骤4：资产绘图（文生图，首次生成资产图片）
 ('asset_image', '资产绘图模板', 4,
- '资产描述：{{asset_desc}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n根据以上内容生成资产图片',
+ '资产描述：{{asset_desc}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n\n请根据以上内容生成资产图片。\n\n【构图规则】\n- 人物资产：正面或3/4侧面全身像，自然站姿，表情中性，纯色背景，确保五官、发型、服饰清晰可辨，便于后续分镜引用。\n- 场景资产：广角全景建立镜头，无人物，展现完整空间布局与光线氛围。\n- 道具资产：居中特写，纯色背景，清晰展示材质、颜色与细节。\n\n【一致性要求】\n严格遵循资产描述中的所有外观特征，不添加描述中未提及的元素。',
  '["asset_desc","art_style","visual_style"]', '步骤4：资产绘图（文生图）', 1, 1),
 
 -- 步骤5：衍生绘图（图生图，基于上一版本资产图片生成衍生版本）
 ('asset_derive', '衍生绘图模板', 5,
- '上一版本资产图片：{{base_image}}\n新的资产描述：{{asset_desc}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n根据以上内容生成衍生资产图片',
+ '上一版本资产图片：{{base_image}}\n新的资产描述：{{asset_desc}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n\n请基于上一版本资产图片生成衍生版本。\n\n【一致性要求（最重要）】\n- 必须保持与上一版本完全相同的身份特征：面部五官、脸型、瞳色、发型与发色、体型、肤色。\n- 仅改变资产描述中明确指出的版本差异部分（如换装、季节变化、昼夜切换等），其余外观严格不变。\n- 画风、镜头角度、光照风格保持一致。\n\n【参考】\n以上一版本资产图片作为身份和外观基准，新生成图片应像同一角色/场景/道具在不同条件下的延续。',
  '["base_image","asset_desc","art_style","visual_style"]', '步骤5：衍生绘图（图生图）', 1, 1),
 
 -- 步骤6：分镜绘图
 ('storyboard_image', '分镜绘图模板', 6,
- '画面描述：{{visual_desc}}\n角色外观描述（必须严格保持人物外观一致）：\n{{character_descriptions}}\n参考资产图片：{{asset_images}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n根据以上内容生成分镜图片，角色外观必须与描述完全一致',
+ '画面描述：{{visual_desc}}\n角色外观描述（必须严格保持人物外观一致）：\n{{character_descriptions}}\n参考资产图片：{{asset_images}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n\n请根据以上内容生成分镜图片。\n\n【一致性要求】\n- 角色外观必须与角色外观描述完全一致（发型、瞳色、服饰、体型），与参考资产图片中的形象保持统一，不同分镜中同一角色的外观不得变化。\n- 同一场景组内的分镜图片应保持空间布局、光线、色调连续，角色位置自然过渡。\n- 严格遵循画面描述中的构图和镜头角度组织画面。\n- 场景/角色/道具的外观需与参考资产图片保持一致。',
  '["visual_desc","character_descriptions","asset_images","art_style","visual_style"]', '步骤6：分镜绘图', 1, 1),
 
 -- 步骤7：配音合成（暂时不使用）
 ('audio', '配音合成模板', 7,
- '音色资产描述：{{voice_asset}}\n台词内容：{{dialogue}}\n根据以上内容生成配音文件，用于绑定人物音色。',
+ '音色资产描述：{{voice_asset}}\n台词内容：{{dialogue}}\n\n请根据以上内容生成配音文件，用于绑定人物音色。\n要求：语速自然，情感表达符合台词内容和角色语气，保持角色音色在不同分镜中的一致性。',
  '["voice_asset","dialogue"]', '步骤7：配音合成（暂时禁用）', 1, 0),
 
 -- 步骤8：视频生成
 ('video', '视频生成模板', 8,
- '分镜脚本：{{storyboards}}\n分镜图片：{{storyboard_image}}\n配音文件：{{audio_files}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n视频比例：{{aspect_ratio}}\n分镜时长：{{duration}}秒\n请根以上内容生成分镜视频。',
- '["storyboards","storyboard_image","audio_files","art_style","visual_style","aspect_ratio","duration"]', '步骤8：视频生成', 1, 1);
+ '分镜脚本：{{storyboards}}\n分镜图片：{{storyboard_image}}\n配音文件：{{audio_files}}\n画风+风格（视觉定位）：{{art_style}}+{{visual_style}}\n视频比例：{{aspect_ratio}}\n分镜时长：{{duration}}秒\n\n请根据以上内容生成分镜视频。\n\n【一致性要求】\n- 以分镜图片为关键参考帧，视频中的角色外观、场景、道具必须与图片保持一致。\n- 角色面部、发型、服装在视频全程不得变化（除非剧情需要）。\n- 画面色调、光线与分镜图片保持统一。\n\n【运动规则】\n- 动作流畅自然，运镜符合分镜脚本描述。\n- 避免画面抖动、角色变形、场景突变。',
+ '["storyboards","storyboard_image","audio_files","art_style","visual_style","aspect_ratio","duration"]', '步骤8：视频生成', 1, 1)
+ON DUPLICATE KEY UPDATE `template_name` = VALUES(`template_name`), `content` = VALUES(`content`), `variables` = VALUES(`variables`), `description` = VALUES(`description`), `current_version` = VALUES(`current_version`), `is_enabled` = VALUES(`is_enabled`);
 
 SET FOREIGN_KEY_CHECKS = 1;
 
@@ -916,7 +883,27 @@ SET @sql = IF(@exists = 0,
   'SELECT ''SKIP: publish_time already exists''');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- 1.9 scene_video.storyboard_seq_range 列（用于重刷作品时按分镜序号严格排序）
+-- 1.9 zip_object_key（ZIP包存储objectKey，懒打包命中时直接重签名）
+SET @tablename = 'comic_work';
+SET @colname = 'zip_object_key';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_work ADD COLUMN `zip_object_key` VARCHAR(512) DEFAULT NULL COMMENT ''ZIP包存储objectKey（懒打包缓存命中时直接重签名）'' AFTER `file_size`',
+  'SELECT ''SKIP: comic_work.zip_object_key already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.10 comic_task.zip_object_key（同 1.9，用于 task-service 维度的缓存命中）
+SET @tablename = 'comic_task';
+SET @colname = 'zip_object_key';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists = 0,
+  'ALTER TABLE comic_task ADD COLUMN `zip_object_key` VARCHAR(512) DEFAULT NULL COMMENT ''ZIP包存储objectKey（懒打包缓存命中时直接重签名）'' AFTER `final_video_url`',
+  'SELECT ''SKIP: comic_task.zip_object_key already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 1.11 scene_video.storyboard_seq_range 列（用于重刷作品时按分镜序号严格排序）
 SET @tablename = 'scene_video';
 SET @colname = 'storyboard_seq_range';
 SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
@@ -947,6 +934,180 @@ SET @sql = IF(@exists = 0,
     KEY `idx_order_index` (`order_index`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT=''作品时间线表（场景组分镜回放顺序）''',
   'SELECT ''SKIP: comic_work_timeline already exists''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+
+-- =============================================================================
+-- MIGRATION: 删除冗余列（P1/P2 数据库减法）
+-- 幂等策略：先检查列是否存在，存在才 DROP
+-- =============================================================================
+
+-- 2.1 comic_task.estimated_complete_time
+SET @tablename = 'comic_task';
+SET @colname = 'estimated_complete_time';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: comic_task.estimated_complete_time already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.2 task_queue.waiting_count_ahead
+SET @tablename = 'task_queue';
+SET @colname = 'waiting_count_ahead';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: task_queue.waiting_count_ahead already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.3 task_queue.estimated_wait_seconds
+SET @colname = 'estimated_wait_seconds';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: task_queue.estimated_wait_seconds already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.4 task_queue.worker_node
+SET @colname = 'worker_node';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: task_queue.worker_node already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.5 task_node_state.parent_node_key
+SET @tablename = 'task_node_state';
+SET @colname = 'parent_node_key';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: task_node_state.parent_node_key already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.6 task_node_state.content_snapshot
+SET @colname = 'content_snapshot';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: task_node_state.content_snapshot already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.7 task_node_state.resource_id
+SET @colname = 'resource_id';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: task_node_state.resource_id already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.8 storyboard_audio.voice_asset_id + idx_voice_asset
+SET @tablename = 'storyboard_audio';
+SET @idxname = 'idx_voice_asset';
+SET @idxexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+                  WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND INDEX_NAME = @idxname);
+SET @sql = IF(@idxexists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP INDEX ', @idxname),
+  'SELECT ''SKIP: idx_voice_asset already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @colname = 'voice_asset_id';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: storyboard_audio.voice_asset_id already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.9 storyboard_audio.emotion_intensity
+SET @colname = 'emotion_intensity';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: storyboard_audio.emotion_intensity already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.10 scene_video.prev_video_id
+SET @tablename = 'scene_video';
+SET @colname = 'prev_video_id';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: scene_video.prev_video_id already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.11 scene_video.prev_video_last_frame
+SET @colname = 'prev_video_last_frame';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: scene_video.prev_video_last_frame already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.12 scene_video.generate_params
+SET @colname = 'generate_params';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: scene_video.generate_params already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.13 asset_image.generate_params
+SET @tablename = 'asset_image';
+SET @colname = 'generate_params';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: asset_image.generate_params already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.14 storyboard_image.generate_params
+SET @tablename = 'storyboard_image';
+SET @colname = 'generate_params';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: storyboard_image.generate_params already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.15 resource_file.md5 + idx_md5
+SET @tablename = 'resource_file';
+SET @idxname = 'idx_md5';
+SET @idxexists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+                  WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND INDEX_NAME = @idxname);
+SET @sql = IF(@idxexists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP INDEX ', @idxname),
+  'SELECT ''SKIP: idx_md5 already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @colname = 'md5';
+SET @exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = @colname);
+SET @sql = IF(@exists > 0,
+  CONCAT('ALTER TABLE ', @tablename, ' DROP COLUMN ', @colname),
+  'SELECT ''SKIP: resource_file.md5 already dropped''');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 2.16 DROP TABLE material_prompt（P0 清理）
+SET @tablename = 'material_prompt';
+SET @texists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+               WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename);
+SET @sql = IF(@texists > 0,
+  CONCAT('DROP TABLE ', @tablename),
+  'SELECT ''SKIP: material_prompt already dropped''');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 

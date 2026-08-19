@@ -152,16 +152,6 @@ export interface StoryboardVO {
   createTime?: string
 }
 
-/** 素材提示词 VO（step 3） */
-export interface MaterialPromptVO {
-  id?: number
-  sceneIndex: number
-  promptType?: string
-  promptText: string
-  negativePrompt?: string
-  createTime?: string
-}
-
 /** 分镜画面 VO（step 4） */
 export interface StoryboardImageVO {
   id?: number
@@ -293,7 +283,6 @@ export interface TaskDetailVO {
   assetImages?: AssetImageVO[]
   /** 步骤5：衍生绘图（衍生资产图，基于首版资产图衍生，baseImageId 非空） */
   deriveImages?: AssetImageVO[]
-  materialPrompts?: MaterialPromptVO[]
   images?: StoryboardImageVO[]
   audios?: StoryboardAudioVO[]
   videos?: SceneVideoVO[]

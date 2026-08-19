@@ -61,9 +61,6 @@ public class TaskDetailVO implements Serializable {
     // ========== 步骤5: 衍生绘图（衍生资产图，base_image_id IS NOT NULL） ==========
     private List<AssetImageVO> deriveImages;
 
-    // ========== 步骤5.5: 素材提示词（若后续接入） ==========
-    private List<MaterialPromptVO> materialPrompts;
-
     // ========== 步骤6: 分镜绘图 ==========
     private List<StoryboardImageVO> images;
 
@@ -156,16 +153,6 @@ public class TaskDetailVO implements Serializable {
         private Integer height;
         private String promptUsed;
         private Integer status;
-        private String createTime;
-    }
-
-    @Data
-    public static class MaterialPromptVO implements Serializable {
-        private Long id;
-        private Integer sceneIndex;
-        private String promptType;
-        private String promptText;
-        private String negativePrompt;
         private String createTime;
     }
 

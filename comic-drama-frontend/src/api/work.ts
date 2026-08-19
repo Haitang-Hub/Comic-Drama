@@ -125,3 +125,13 @@ export interface SceneVideoItem {
 export function listSceneVideosByTask(taskId: number) {
   return request.get<any, SceneVideoItem[]>(`/api/workflow/video/task/${taskId}`)
 }
+
+/**
+ * 按需（懒）打包成片 ZIP。
+ * @param id 作品 ID 或 任务 ID（后端内部会自动解析）
+ * @param redirect true：后端返回 302，浏览器直接下载；false：后端返回 JSON 包签名 URL，前端自己跳转下载。
+ *                 前端默认用 false，方便显示"打包中"loading 状态和错误提示。
+ */
+export function downloadWorkZip(id: number, redirect = false) {
+  return request.get<any, string>(`/api/work/${id}/download-zip`, { params: { redirect } })
+}

@@ -10,7 +10,7 @@ public interface PromptTemplateProvider {
     /**
      * 按模板编码获取当前生效的模板内容。
      *
-     * @param templateCode 模板编码（如 outline / storyboard / material_prompt）
+     * @param templateCode 模板编码（如 summary / storyboard / asset_design）
      * @return 模板内容字符串（含 {variable} 占位符）
      */
     String getTemplateContent(String templateCode);

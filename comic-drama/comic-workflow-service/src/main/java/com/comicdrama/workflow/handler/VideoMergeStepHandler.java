@@ -5,7 +5,6 @@ import com.comicdrama.common.dto.TaskCreateDTO;
 import com.comicdrama.common.exception.BizException;
 import com.comicdrama.common.result.Result;
 import com.comicdrama.common.service.TaskPauseChecker;
-import com.comicdrama.common.storage.StorageService;
 import com.comicdrama.workflow.dto.FinalWorkInfo;
 import com.comicdrama.workflow.dto.VideoManifestDTO;
 import com.comicdrama.workflow.entity.SceneVideo;
@@ -19,48 +18,29 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.BufferedOutputStream;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 /**
  * VIDEO_MERGE 步骤处理器：视频合并（步骤9）。
  * 纯算法处理步骤，不调用 AI 模型。
  *
- * <p>播放清单方案：收集所有场景视频 → 按序编号下载(001/002/003.mp4) →
- * 生成 manifest.json → 打包 ZIP → 上传存储 → 创建 ComicWork → 存 FinalWorkInfo 到 context。</p>
+ * <p>懒打包方案：步骤9不再立即打包 ZIP，只做：
+ * 收集所有场景视频 → 按序生成 manifest.json → 创建/更新 ComicWork 作品记录 →
+ * 写入作品时间线 → 将 manifest 和打包元信息存 FinalWorkInfo 到 context。
+ * 实际 ZIP 打包在用户点击「下载成片包」时按需生成（见 resource-service downloadZip 接口）。</p>
  */
 @Slf4j
 @Component
 public class VideoMergeStepHandler extends AbstractStepHandler {
 
     private final SceneVideoService videoService;
-    private final StorageService storageService;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
     @Value("${app.resource-service.url:http://127.0.0.1:8105}")
     private String resourceServiceUrl;
-
-    @Value("${app.video-merge.zip-url-expire-seconds:604800}")
-    private int zipUrlExpireSeconds;
-
-    @Value("${app.video-merge.download-timeout-seconds:300}")
-    private int downloadTimeoutSeconds;
 
     public VideoMergeStepHandler(List<com.comicdrama.common.ai.AiModelInvoker> invokers,
                                  AiModelConfigProvider modelConfigProvider,
@@ -72,13 +52,11 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
                                  TokenUsageRecorder tokenUsageRecorder,
                                  TaskPauseChecker pauseChecker,
                                  SceneVideoService videoService,
-                                 StorageService storageService,
                                  RestTemplate restTemplate,
                                  ObjectMapper objectMapper) {
         super(invokers, modelConfigProvider, promptTemplateProvider, progressRecorder, failureRecorder,
                 broadcaster, bindingResolver, tokenUsageRecorder, pauseChecker);
         this.videoService = videoService;
-        this.storageService = storageService;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
     }
@@ -101,9 +79,9 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
         Long taskId = context.getTaskId();
         List<SceneVideo> videos = context.getArtifact(StepEnum.VIDEO);
 
-        log.info("[VIDEO_MERGE] 开始视频合并（播放清单方案），sceneVideoCount={}, taskId={}",
+        log.info("[VIDEO_MERGE] 开始视频合并（懒打包方案：本步不打包ZIP，仅归档manifest和作品），sceneVideoCount={}, taskId={}",
                 videos.size(), taskId);
-        reportProgress(context, 5, "正在收集场景视频...");
+        reportProgress(context, 10, "正在收集场景视频...");
 
         // 1. 按 sceneGroupId + 起始分镜序号（从storyboardIds解析）双层严格排序，同组内按分镜号递增
         //    SceneVideo.sceneGroupId 可能重复，storyboardIds 格式为 "minSeq,maxSeq"（如 "1,2"）
@@ -119,117 +97,55 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
             throw new BizException("没有有效的场景视频可供合并");
         }
 
-        // 2. 创建临时目录
-        Path tempDir = Files.createTempDirectory("comic-merge-" + taskId + "-");
-        log.info("[VIDEO_MERGE] 临时目录: {}, taskId={}", tempDir, taskId);
+        reportProgress(context, 30, "正在生成播放清单...");
 
-        try {
-            // 3. 下载视频，按序编号 001_xxx.mp4, 002_xxx.mp4...
-            reportProgress(context, 15, "正在下载场景视频...");
-            List<DownloadedVideo> downloaded = downloadVideos(sortedVideos, tempDir, context);
+        // 2. 生成 manifest.json（用于在线播放 + 后续按需打包ZIP时复用）
+        VideoManifestDTO manifest = buildManifest(context, sortedVideos);
+        String manifestJson = objectMapper.writeValueAsString(manifest);
 
-            // 4. 生成 manifest.json
-            reportProgress(context, 60, "正在生成播放清单...");
-            VideoManifestDTO manifest = buildManifest(context, sortedVideos, downloaded);
-            String manifestJson = objectMapper.writeValueAsString(manifest);
-            Path manifestPath = tempDir.resolve("manifest.json");
-            Files.writeString(manifestPath, manifestJson, StandardCharsets.UTF_8);
+        // 3. 封面 = 首个场景视频的 baseFrameUrl
+        String coverUrl = sortedVideos.get(0).getBaseFrameUrl();
 
-            // 5. 打包 ZIP
-            reportProgress(context, 70, "正在打包ZIP文件...");
-            String zipFileName = "comic-" + (context.getTaskNo() != null ? context.getTaskNo() : taskId) + ".zip";
-            Path zipPath = tempDir.resolve(zipFileName);
-            long zipSize = buildZip(downloaded, manifestPath, zipPath);
+        // 4. 调用 resource-service 创建/更新 ComicWork
+        reportProgress(context, 60, "正在归档作品记录...");
+        // 首段可播放视频 URL（mp4），ZIP 包地址留空，用户点击下载时按需生成
+        String primaryVideoUrl = !sortedVideos.isEmpty() ? sortedVideos.get(0).getVideoUrl() : null;
+        Long workId = upsertComicWork(context, coverUrl, null,
+                manifest.getSegmentCount(), manifest.getTotalDuration(), sortedVideos);
 
-            // 6. 上传 ZIP 到 StorageService
-            reportProgress(context, 85, "正在上传成片包...");
-            String zipObjectKey = "task/" + taskId + "/final/" + zipFileName;
-            try (InputStream zipIs = Files.newInputStream(zipPath)) {
-                storageService.upload(zipIs, zipObjectKey, zipSize, "application/zip");
-            }
-
-            // 7. 获取签名URL
-            String zipSignedUrl = storageService.signUrl(zipObjectKey, zipUrlExpireSeconds);
-
-            // 8. 封面 = 首个场景视频的 baseFrameUrl
-            String coverUrl = sortedVideos.get(0).getBaseFrameUrl();
-
-            // 9. 调用 resource-service 创建/更新 ComicWork
-            reportProgress(context, 90, "正在归档作品记录...");
-            Long workId = upsertComicWork(context, coverUrl, zipSignedUrl,
-                    manifest.getSegmentCount(), manifest.getTotalDuration(), sortedVideos);
-
-            // 9.5 写入作品时间线条目（供详情页播放）
-            if (workId != null) {
-                writeTimeline(workId, sortedVideos);
-            }
-
-            // 10. 构建 FinalWorkInfo 存入 context
-            FinalWorkInfo finalInfo = FinalWorkInfo.builder()
-                    .coverUrl(coverUrl)
-                    .finalVideoUrl(zipSignedUrl)
-                    .zipObjectKey(zipObjectKey)
-                    .zipFileSize(zipSize)
-                    .segmentCount(manifest.getSegmentCount())
-                    .totalDuration(manifest.getTotalDuration())
-                    .workId(workId)
-                    .videos(manifest.getVideos())
-                    .manifestJson(manifestJson)
-                    .build();
-            context.putArtifact(StepEnum.VIDEO_MERGE, finalInfo);
-
-            reportProgress(context, 100, "视频合并完成，成片包已生成");
-            log.info("[VIDEO_MERGE] 完成 taskId={}, zipUrl={}, workId={}, size={}B, segments={}",
-                    taskId, zipSignedUrl, workId, zipSize, manifest.getSegmentCount());
-
-        } finally {
-            cleanupTempDir(tempDir);
+        // 5. 写入作品时间线条目（供详情页播放）
+        reportProgress(context, 80, "正在写入作品播放时间线...");
+        if (workId != null) {
+            writeTimeline(workId, sortedVideos);
         }
-    }
 
-    // ==================== 下载视频 ====================
-
-    private record DownloadedVideo(int orderIndex, String filename, Path path, SceneVideo source) {}
-
-    private List<DownloadedVideo> downloadVideos(List<SceneVideo> videos, Path tempDir,
-                                                  StepContext context) throws Exception {
-        List<DownloadedVideo> result = new ArrayList<>();
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
+        // 6. 构建 FinalWorkInfo 存入 context（注意 finalVideoUrl 和 zip 字段均为 null，
+        //    后续 downloadZip 接口按需生成ZIP并回填 comic_task.final_video_url 与 comic_work.zip_url）
+        FinalWorkInfo finalInfo = FinalWorkInfo.builder()
+                .coverUrl(coverUrl)
+                .finalVideoUrl(null)      // 懒打包：ZIP URL 留空
+                .zipObjectKey(null)
+                .zipFileSize(null)
+                .segmentCount(manifest.getSegmentCount())
+                .totalDuration(manifest.getTotalDuration())
+                .workId(workId)
+                .videos(manifest.getVideos())
+                .manifestJson(manifestJson)
                 .build();
-        int total = videos.size();
-        for (int i = 0; i < total; i++) {
-            SceneVideo v = videos.get(i);
-            int orderIndex = i + 1;
-            String filename = String.format("%03d_scene%d.mp4", orderIndex,
-                    v.getSceneGroupId() != null ? v.getSceneGroupId() : orderIndex);
-            Path target = tempDir.resolve(filename);
+        context.putArtifact(StepEnum.VIDEO_MERGE, finalInfo);
 
-            HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(v.getVideoUrl()))
-                    .timeout(Duration.ofSeconds(downloadTimeoutSeconds))
-                    .GET().build();
-            HttpResponse<InputStream> resp = client.send(req, HttpResponse.BodyHandlers.ofInputStream());
-            if (resp.statusCode() != 200) {
-                throw new BizException("下载场景视频失败: HTTP " + resp.statusCode()
-                        + ", url=" + v.getVideoUrl());
-            }
-            try (InputStream is = resp.body()) {
-                Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
-            }
-            result.add(new DownloadedVideo(orderIndex, filename, target, v));
-
-            int progress = 15 + (int) ((i + 1) / (double) total * 40);
-            reportProgress(context, progress, "已下载 " + (i + 1) + "/" + total + " 段视频");
-            log.debug("[VIDEO_MERGE] 下载完成 {}/{}: {}", i + 1, total, filename);
-        }
-        return result;
+        reportProgress(context, 100, "作品归档完成，下载成片包时将按需打包ZIP");
+        log.info("[VIDEO_MERGE] 完成（懒打包）taskId={}, workId={}, segments={}, 总时长={}s",
+                taskId, workId, manifest.getSegmentCount(), manifest.getTotalDuration());
     }
 
     // ==================== 构建 manifest ====================
 
-    private VideoManifestDTO buildManifest(StepContext context, List<SceneVideo> videos,
-                                            List<DownloadedVideo> downloaded) {
+    /**
+     * 构建播放清单 manifest。
+     * 文件名按序编号 001_scene{groupId}.mp4，与按需打包ZIP时生成的文件名保持一致。
+     */
+    private VideoManifestDTO buildManifest(StepContext context, List<SceneVideo> videos) {
         TaskCreateDTO dto = context.getRequestDTO();
         VideoManifestDTO manifest = new VideoManifestDTO();
         manifest.setTaskId(context.getTaskId());
@@ -246,40 +162,23 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
         manifest.setTotalDuration(totalDur);
 
         List<VideoManifestDTO.VideoEntry> entries = new ArrayList<>();
-        for (DownloadedVideo dv : downloaded) {
+        for (int i = 0; i < videos.size(); i++) {
+            SceneVideo v = videos.get(i);
+            int orderIndex = i + 1;
+            String filename = String.format("%03d_scene%d.mp4", orderIndex,
+                    v.getSceneGroupId() != null ? v.getSceneGroupId() : orderIndex);
             VideoManifestDTO.VideoEntry e = new VideoManifestDTO.VideoEntry();
-            e.setOrderIndex(dv.orderIndex());
-            e.setFilename(dv.filename());
-            e.setSceneGroupId(dv.source().getSceneGroupId());
-            e.setStoryboardSeqRange(dv.source().getStoryboardSeqRange());
-            e.setDuration(dv.source().getDuration() != null ? dv.source().getDuration().intValue() : 0);
-            e.setOriginalUrl(dv.source().getVideoUrl());
-            e.setCoverUrl(dv.source().getBaseFrameUrl());
+            e.setOrderIndex(orderIndex);
+            e.setFilename(filename);
+            e.setSceneGroupId(v.getSceneGroupId());
+            e.setStoryboardSeqRange(v.getStoryboardSeqRange());
+            e.setDuration(v.getDuration() != null ? v.getDuration().intValue() : 0);
+            e.setOriginalUrl(v.getVideoUrl());
+            e.setCoverUrl(v.getBaseFrameUrl());
             entries.add(e);
         }
         manifest.setVideos(entries);
         return manifest;
-    }
-
-    // ==================== 打包 ZIP ====================
-
-    private long buildZip(List<DownloadedVideo> downloaded, Path manifestPath, Path zipPath) throws Exception {
-        try (ZipOutputStream zos = new ZipOutputStream(
-                new BufferedOutputStream(Files.newOutputStream(zipPath)))) {
-            addToZip(zos, "manifest.json", manifestPath);
-            for (DownloadedVideo dv : downloaded) {
-                addToZip(zos, dv.filename(), dv.path());
-            }
-        }
-        return Files.size(zipPath);
-    }
-
-    private void addToZip(ZipOutputStream zos, String entryName, Path file) throws Exception {
-        zos.putNextEntry(new ZipEntry(entryName));
-        try (InputStream is = Files.newInputStream(file)) {
-            is.transferTo(zos);
-        }
-        zos.closeEntry();
     }
 
     // ==================== 创建/更新 ComicWork ====================
@@ -444,24 +343,6 @@ public class VideoMergeStepHandler extends AbstractStepHandler {
             return Long.parseLong(first.trim());
         } catch (Exception e) {
             return Long.MAX_VALUE;
-        }
-    }
-
-    // ==================== 清理临时文件 ====================
-
-    private void cleanupTempDir(Path tempDir) {
-        try {
-            if (Files.exists(tempDir)) {
-                try (Stream<Path> walk = Files.walk(tempDir)) {
-                    walk.sorted(Comparator.reverseOrder())
-                            .forEach(p -> {
-                                try { Files.deleteIfExists(p); } catch (Exception ignored) {}
-                            });
-                }
-                log.debug("[VIDEO_MERGE] 临时目录已清理: {}", tempDir);
-            }
-        } catch (Exception e) {
-            log.warn("[VIDEO_MERGE] 清理临时目录失败: {}, error={}", tempDir, e.getMessage());
         }
     }
 }

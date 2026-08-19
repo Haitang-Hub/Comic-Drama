@@ -189,9 +189,6 @@ public class TaskServiceImpl extends ServiceImpl<ComicTaskMapper, ComicTask> imp
         // 查询场景分组（从 storyboard 的 group_id 派生）
         vo.setSceneGroups(querySceneGroups(id));
 
-        // 步骤5衍生绘图已经通过 deriveImages 直接返回，materialPrompts 作为扩展保留（目前为空列表）
-        vo.setMaterialPrompts(new ArrayList<>());
-
         // 查询进度日志
         vo.setProgressLogs(queryProgressLogs(id));
         // 查询节点状态

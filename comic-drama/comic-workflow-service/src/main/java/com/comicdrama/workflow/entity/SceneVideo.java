@@ -23,7 +23,6 @@ public class SceneVideo extends BaseTimeEntity {
     private Integer frameCount;
     private BigDecimal duration;
     private String resolution;
-    private String generateParams;
     private Integer status;
     private Integer regenerateCount;
 }

@@ -20,7 +20,6 @@ public class StoryboardImage extends BaseTimeEntity {
     private String characterRefs;
     private String sceneRefs;
     private String propRefs;
-    private String generateParams;
     private Integer status;
     private Integer regenerateCount;
     private Integer width;

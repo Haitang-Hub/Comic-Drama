@@ -35,15 +35,9 @@ public class TaskQueue implements Serializable {
 
     private Integer queuePosition;
 
-    private Integer waitingCountAhead;
-
-    private Integer estimatedWaitSeconds;
-
     private LocalDateTime enqueuedTime;
 
     private LocalDateTime startedTime;
 
     private LocalDateTime finishedTime;
-
-    private String workerNode;
 }

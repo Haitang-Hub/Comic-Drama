@@ -59,6 +59,7 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
     private final MessageBroadcaster broadcaster;
     private final com.comicdrama.workflow.handler.ArtifactLoader artifactLoader;
     private final com.comicdrama.workflow.handler.StepModelBindingResolver bindingResolver;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     // 各步骤产物对应的 Service（用于重新生成时删除旧产物）
     private final com.comicdrama.workflow.service.StorySummaryService storySummaryService;
@@ -523,9 +524,24 @@ public class WorkflowPipelineServiceImpl implements WorkflowPipelineService {
             } catch (Exception e) { logCleanupFail(8, e, taskId); }
         }
 
-        // 步骤9: 视频合并 (order=9) — 无独立产物表
+        // 步骤9: 视频合并 (order=9) — 清理ZIP缓存（comic_task.final_video_url、comic_work.zip_url 以及 zip_object_key），
+        //          确保后续步骤9重跑或用户下载时基于最新视频重新打包
         if (9 >= fromStep && 9 <= toStep) {
-            log.info("[deleteStepArtifacts] 步骤9[VIDEO_MERGE]无需删除产物(合并结果), taskId={}", taskId);
+            try {
+                int clearedTask = jdbcTemplate.update(
+                        "UPDATE comic_task SET final_video_url = NULL WHERE id = ?", taskId);
+                int clearedWork = jdbcTemplate.update(
+                        "UPDATE comic_work SET zip_url = NULL, file_size = NULL WHERE task_id = ?", taskId);
+                // zip_object_key 列可能尚未 ALTER TABLE，忽略异常
+                try {
+                    jdbcTemplate.update("UPDATE comic_task SET zip_object_key = NULL WHERE id = ?", taskId);
+                } catch (Exception ignored) {}
+                try {
+                    jdbcTemplate.update("UPDATE comic_work SET zip_object_key = NULL WHERE task_id = ?", taskId);
+                } catch (Exception ignored) {}
+                log.info("[deleteStepArtifacts] 已清理步骤9[VIDEO_MERGE]ZIP缓存（task表final_video_url清{}条，work表zip_url清{}条）, taskId={}",
+                        clearedTask, clearedWork, taskId);
+            } catch (Exception e) { logCleanupFail(9, e, taskId); }
         }
     }
 

@@ -28,12 +28,6 @@ public class TaskNodeState extends BaseTimeEntity {
     /** 节点状态：0等待 1进行中 2成功 3失败 */
     private Integer nodeStatus;
 
-    private String parentNodeKey;
-
-    private String contentSnapshot;
-
-    private Long resourceId;
-
     private Integer canRegenerate;
 
     private Integer regenerateCount;

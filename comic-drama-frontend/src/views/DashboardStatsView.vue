@@ -235,7 +235,7 @@ function updateCharts() {
 
   if (stepChart) {
     const stepNames = ['大纲', '分镜', '角色', '绘图', '配音', '视频']
-    const stepKeys = ['outline', 'storyboard', 'material', 'image', 'audio', 'video']
+    const stepKeys = ['outline', 'storyboard', 'asset', 'image', 'audio', 'video']
     const stepColors = [primary, accent, '#2ec4b6', '#ff9f1c', '#e63946', '#6b5ce7']
 
     stepChart.setOption({

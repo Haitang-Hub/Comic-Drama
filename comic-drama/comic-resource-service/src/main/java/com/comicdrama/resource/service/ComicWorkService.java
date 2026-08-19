@@ -21,4 +21,13 @@ public interface ComicWorkService extends IService<ComicWork> {
     ComicWork getByShareToken(String token);
 
     void incrementViewCount(Long id);
+
+    /**
+     * 按需（懒）打包成片ZIP包并返回签名下载URL。
+     * 缓存命中直接返回；缓存未命中则实时：构建manifest → 下载场景视频 → 打包ZIP → 上传存储 → 回填DB → 返回签名URL。
+     *
+     * @param workOrTaskId 作品ID（comic_work.id）或任务ID（comic_task.id，懒创建作品场景）
+     * @return ZIP 包签名下载 URL
+     */
+    String buildAndGetZipDownloadUrl(Long workOrTaskId);
 }

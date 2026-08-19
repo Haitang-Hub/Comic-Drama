@@ -10,7 +10,6 @@ public enum NodeType {
     OUTLINE("outline", "大纲"),
     SCENE_GROUP("scene_group", "场景分组"),
     STORYBOARD("storyboard", "分镜"),
-    MATERIAL("material", "素材提示词"),
     IMAGE("image", "分镜画面"),
     AUDIO("audio", "分镜配音"),
     VIDEO("video", "场景视频");
